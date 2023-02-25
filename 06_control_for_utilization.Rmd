@@ -1,0 +1,176 @@
+---
+title: "06_control_for_utilization.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(mgcv)
+library(writexl)
+
+```
+
+### Functions for running association analysis
+
+```{r, warning = FALSE}
+
+# Function for computing concept counts for each cohort
+compute_counts <- function(hf_cohort) {
+  hf_cohort_df_name <- deparse(substitute(hf_cohort))
+  cohort <- str_split(hf_cohort_df_name, "_")[[1]][2]
+  cc <- select(hf_cohort, phecode, person_id) %>%
+    distinct() %>%
+    group_by(phecode) %>%
+    dplyr::summarise(count = n())
+  colnames(cc)[2] <- paste0(cohort, "_count")
+  return (cc)
+}
+
+# Function for getting the concept counts for each cohort and combining by study
+# for a given type of health factor
+get_study_counts <- function(hf_case, hf_control, case_cohort_size, control_cohort_size) {
+  # Get concept counts for each cohort
+  cc_case <- compute_counts(hf_case)
+  cc_control <- compute_counts(hf_control)
+  # Combine by study
+  counts_case_control <- join_all(list(cc_case, cc_control), by = "phecode", type = "full") %>%
+    arrange(phecode)
+  counts_case_control[is.na(counts_case_control)] <- 0
+  counts_case_control <- counts_case_control
+  # Compute proportions
+  counts_case_control <- counts_case_control %>%
+    mutate(prop_case = case_count / case_cohort_size,
+           prop_control = control_count / control_cohort_size)
+  # Remove phenotypes where neither the case nor the control has >=5 people with it
+  # counts_case_control <- filter(counts_case_control, case_count >= 5 | control_count >= 5)
+  # Return counts
+  return (counts_case_control)
+}
+
+# Function that computes odds ratio for each phecode
+compute_ors_pvals <- function(curr_phecode, hf, all_patients) {
+  # Make a dataframe with outcome, age, and phecode status
+  model_in <- select(all_patients, person_id, outcome, age, race, ethnicity, num_visits_study) %>%
+    # Outcome is either rpl (rpl vs control) or birth (birth vs loss)
+    mutate(outcome = ifelse(outcome == "rpl" | outcome == "birth", 1, 0),
+           phecode_status = ifelse(person_id %in% filter(hf, phecode == curr_phecode)$person_id, 1, 0))
+  # Run model with age, race, ethnicity, number of visits in study
+  m_w_hu <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity + num_visits_study, family = binomial(), method = "REML", data = model_in)
+  # Get ORs and pvals
+  curr_phecode_stats <- c(curr_phecode, exp(coef(m_w_hu))[2], summary(m_w_hu)$p.table[2,4]) %>%
+    t() %>%
+    as.data.frame()
+  colnames(curr_phecode_stats) <- c("phecode", "odds_ratio_w_hu", "p_value_w_hu")
+  # Return
+  return (curr_phecode_stats)
+}
+
+# Function that gets odds ratios and pvals for all phecodes
+get_ors_pvals <- function(counts, hf_case, hf_control, all_patients) {
+  # Combine hf
+  hf <- rbind(hf_case, hf_control) %>%
+    distinct()
+  # Compute stats for first phecode
+  ors_pvals <- compute_ors_pvals(counts$phecode[1], hf, all_patients)
+  # Compute stats for the rest
+  for (p in 2:nrow(counts)) {
+    curr_phecode <- counts$phecode[p]
+    p_stats <- compute_ors_pvals(curr_phecode, hf, all_patients)
+    ors_pvals <- rbind(ors_pvals, p_stats)
+  }
+  # Add a column for adjusted pvalues
+  ors_pvals <- ors_pvals %>%
+    mutate(adj_p_value_w_hu = p.adjust(p_value_w_hu, method = "BH")) %>%
+    select(1, 2, 3, 4)
+  return (ors_pvals)
+}
+
+# Function for doing analysis
+compute_stats <- function(co_case, co_control, case_cohort_size, control_cohort_size, all_patients, outcome) {
+  counts_case_control <- get_study_counts(co_case, co_control, case_cohort_size, control_cohort_size)
+  odds_ratios_pvals <- get_ors_pvals(counts_case_control, co_case, co_control, all_patients)
+  stats <- select(phecode_definitions, phecode, phenotype, category) %>%
+    inner_join(counts_case_control) %>%
+    left_join(odds_ratios_pvals) %>%
+    arrange(phenotype)
+  # Customize column names
+  if (outcome == "birth") {
+    stats <- stats %>%
+      dplyr::rename(birth_count = case_count, loss_count = control_count, birth_prop = prop_case, loss_prop = prop_control)
+  }
+  if (outcome == "rpl") {
+    stats <- stats %>%
+      dplyr::rename(rpl_count = case_count, control_count = control_count, rpl_prop = prop_case, control_prop = prop_control)
+  }
+  return (stats)
+}
+
+```
+
+### Load data and prep dataframe for analysis
+
+```{r}
+
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+load("data/phecodes/mappings/co.rda")
+load("data/cohorts/all_patients_rpl_control.rda")
+
+all_patients_rpl_control <- all_patients_rpl_control %>%
+  dplyr::rename(age = age_t0) %>%
+  mutate(outcome = ifelse(RPL == 1, "rpl", "control"))
+
+```
+
+### Run RPL vs control analysis with healthcare utilization (num visits in study)
+
+```{r}
+
+# Get unique occurrences of conditions
+co_rpl <- select(co_rpl, person_id, phecode) %>%
+  distinct()
+co_control <- select(co_control, person_id, phecode) %>%
+  distinct()
+
+# Compute stats
+stats_hu <- compute_stats(
+  co_rpl,
+  co_control,
+  length(unique(filter(all_patients_rpl_control, outcome == "rpl")$person_id)),
+  length(unique(filter(all_patients_rpl_control, outcome == "control")$person_id)),
+  all_patients_rpl_control,
+  "rpl"
+)
+
+```
+
+### Save results
+
+```{r}
+
+save(stats_hu, file = "data/associations/stats_all_hu.rda")
+
+```
+
+### Write excel file of sig results (adjusted p < 0.05)
+
+```{r}
+
+sheets <- list(
+  "RPL neg" = filter(stats_hu, odds_ratio_w_hu < 1 & adj_p_value_w_hu < 0.05) %>%
+    select(phenotype, category, rpl_count, odds_ratio_w_hu, adj_p_value_w_hu) %>%
+    arrange(category),
+  "RPL pos" = filter(stats_hu, odds_ratio_w_hu > 1 & adj_p_value_w_hu < 0.05) %>%
+    select(phenotype, category, rpl_count, odds_ratio_w_hu, adj_p_value_w_hu) %>%
+    arrange(category))
+
+write_xlsx(sheets, "data/associations/sig_results_hu.xlsx")
+
+```
+

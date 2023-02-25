@@ -1,0 +1,71 @@
+---
+title: "07_make_patient_tables.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(table1)
+library(ggpubr)
+library(mgcViz)
+library(ggrepel)
+library(writexl)
+library(kableExtra)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/cohorts/all_patients_rpl_control.rda")
+
+```
+
+### Make a function for computing p-values for table1
+Source 1: https://github.com/benjaminrich/table1/issues/52
+Source 2: https://cran.r-project.org/web/packages/table1/vignettes/table1-examples.html
+
+```{r}
+
+# Function for computing p-values for table1
+# Source 1: https://github.com/benjaminrich/table1/issues/52
+# Source 2: https://cran.r-project.org/web/packages/table1/vignettes/table1-examples.html
+pvalue <- function(x, ...) {
+  x <- x[-length(x)]  # Remove "overall" group
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+```
+
+### Make demographic tables
+
+```{r}
+
+# Make table
+table1(~ Gender + Age + Race + Ethnicity + `Number of visits (in study)` + `Years in EHR (in study)` + `Number of diagnoses (in study)` | Group, data = all_patients_rpl_control, overall = "Total", extra.col = list(`P-value` = pvalue), extra.col.pos = 4)
+
+# Also make tables for patients under and over 35
+table1(~ Gender + Age + Race + Ethnicity + `Number of visits (in study)` + `Years in EHR (in study)` + `Number of diagnoses (in study)` | Group, data = filter(all_patients_rpl_control, age_t0 < 35), overall = "Total", extra.col = list(`P-value` = pvalue), extra.col.pos = 4)
+table1(~ Gender + Age + Race + Ethnicity + `Number of visits (in study)` + `Years in EHR (in study)` + `Number of diagnoses (in study)` | Group, data = filter(all_patients_rpl_control, age_t0 >= 35), overall = "Total", extra.col = list(`P-value` = pvalue), extra.col.pos = 4)
+
+```
+

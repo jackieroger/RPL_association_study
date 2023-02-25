@@ -1,0 +1,474 @@
+---
+title: "08_analyze_ucsf_results.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(table1)
+library(ggpubr)
+library(mgcViz)
+library(ggrepel)
+library(writexl)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/cohorts/RPL.rda")
+load("data/cohorts/C.rda")
+load("data/cohorts/all_patients_rpl_control.rda")
+load("data/umap/umap_coords.rda")
+load("data/associations/stats_all.rda")
+load("data/associations/stats_all_hu.rda")
+
+```
+
+### Log transforms
+
+```{r}
+
+stats_rpl_control <- stats_rpl_control %>%
+  mutate(log_odds_ratio = log(odds_ratio_w_age_re, base = 10),
+         log_p_value = -log(adj_p_value_w_age_re, base = 10))
+
+stats_rpl_control <- stats_rpl_control %>%
+  mutate(Result = factor(case_when(
+    adj_p_value_w_age_re < 0.05 & log_odds_ratio > 0 ~ "Positive",
+    adj_p_value_w_age_re < 0.05 & log_odds_ratio < 0 ~ "Negative",
+    TRUE ~ "Not significant"), levels = c("Positive", "Negative", "Not significant")
+  ))
+
+stats_hu <- stats_hu %>%
+  mutate(log_odds_ratio = log(odds_ratio_w_hu, base = 10),
+         log_p_value = -log(adj_p_value_w_hu, base = 10)) %>%
+  mutate(Result = factor(case_when(
+    adj_p_value_w_hu < 0.05 & log_odds_ratio > 0 ~ "Positive",
+    adj_p_value_w_hu < 0.05 & log_odds_ratio < 0 ~ "Negative",
+    TRUE ~ "Not significant"), levels = c("Positive", "Negative", "Not significant")
+  ))
+stats_hu_sig <- filter(stats_hu, Result != "Not significant")
+
+```
+
+### UMAP
+
+```{r}
+
+# Pull together umap info
+umap_coords <- umap_coords %>%
+  left_join(all_patients_rpl_control) %>%
+  mutate(`Age strata` = factor(ifelse(age_t0 < 35, "<35", "35+"), levels = c("<35", "35+")))
+
+# Compute p-values for coords
+wilcox.test(x ~ cohort, data = umap_coords, paired = FALSE, exact = FALSE, conf.int = TRUE)
+wilcox.test(x ~ cohort, data = umap_coords, paired = FALSE, exact = FALSE, conf.int = TRUE)
+
+# Groups
+p1 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = Group)) +
+  theme_minimal() +
+  scale_color_manual(values=c("indianred2", "steelblue2")) +
+  ggtitle("UCSF diagnosis UMAP - RPL & Control")
+
+p2  <- ggplot(umap_coords) +
+  geom_violin(aes(x = cohort, y = x, fill = Group, color = Group)) +
+  geom_boxplot(aes(x = cohort, y = x, fill = Group), width = 0.1, fill = "white", color = "black", outlier.size = 0.5) +
+  stat_compare_means(aes(x = cohort, y = x), label.x = 1.1, label.y = 8, size = 2.5) +
+  theme_minimal() +
+  scale_fill_manual(values=c("indianred2", "steelblue2")) +
+  scale_color_manual(values=c("indianred2", "steelblue2")) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = margin(t = 20))
+
+p3 <- ggplot(umap_coords) +
+  geom_violin(aes(x = cohort, y = y, fill = Group, color = Group)) +
+  geom_boxplot(aes(x = cohort, y = y, fill = Group), width = 0.1, fill = "white", color = "black", outlier.size = 0.5) +
+  stat_compare_means(aes(x = cohort, y = x), label.x = 1.1, label.y = 11, size = 2.5) +
+  theme_minimal() +
+  scale_fill_manual(values=c("indianred2", "steelblue2")) +
+  scale_color_manual(values=c("indianred2", "steelblue2")) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = margin(t = 20))
+p4 <- ggarrange(p2, p3, nrow = 2)
+p5 <- ggarrange(p1, p4, ncol = 2, widths = c(2,1))
+p5
+ggsave("figures/all/umap/umap_groups.png", width = 9, height = 4)
+
+# Age
+p6 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = `Age strata`)) +
+  theme_minimal() +
+  scale_color_manual(values = c("darkgoldenrod2", "mediumpurple2")) +
+  ggtitle("UCSF diagnosis UMAP - age strata")
+
+p7  <- ggplot(umap_coords) +
+  geom_violin(aes(x = `Age strata`, y = x, fill = `Age strata`, color = `Age strata`)) +
+  geom_boxplot(aes(x = `Age strata`, y = x, fill = `Age strata`), width = 0.1, fill = "white", color = "black", outlier.size = 0.5) +
+  stat_compare_means(aes(x = `Age strata`, y = x), label.x = 1.1, label.y = 8, size = 2.5) +
+  theme_minimal() +
+  scale_fill_manual(values = c("darkgoldenrod2", "mediumpurple2")) +
+  scale_color_manual(values = c("darkgoldenrod2", "mediumpurple2")) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = margin(t = 20))
+
+p8 <- ggplot(umap_coords) +
+  geom_violin(aes(x = `Age strata`, y = y, fill = `Age strata`, color = `Age strata`)) +
+  geom_boxplot(aes(x = `Age strata`, y = y, fill = `Age strata`), width = 0.1, fill = "white", color = "black", outlier.size = 0.5) +
+  stat_compare_means(aes(x = `Age strata`, y = x), label.x = 1.1, label.y = 11, size = 2.5) +
+  theme_minimal() +
+  scale_fill_manual(values = c("darkgoldenrod2", "mediumpurple2")) +
+  scale_color_manual(values = c("darkgoldenrod2", "mediumpurple2")) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = margin(t = 20))
+p9 <- ggarrange(p7, p8, nrow = 2)
+p10 <- ggarrange(p6, p9, ncol = 2, widths = c(2,1))
+p10
+ggsave("figures/all/umap/umap_age.png", width = 9, height = 4)
+
+# Combine group and age umaps
+ggarrange(p5, p10, nrow = 2, widths = c(1,2))
+ggsave("figures/all/umap/umap_both.png", width = 9, height = 8)
+ggsave("figures/all/umap/pdf_fig3.pdf", width = 9, height = 9)
+
+# Race
+p1 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = Race)) +
+  theme_minimal() +
+  ggtitle("UCSF diagnosis UMAP - race")
+p1
+ggsave("figures/all/umap/umap_race.png", width = 8, height = 4)
+
+# Ethnicity
+p2 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = Ethnicity)) +
+  theme_minimal() +
+  scale_color_manual(values = c("violet", "yellowgreen", "cornflowerblue")) +
+  ggtitle("UCSF diagnosis UMAP - ethnicity")
+p2
+ggsave("figures/all/umap/umap_ethnicity.png", width = 7, height = 4)
+
+# Combine demographics umaps
+ggarrange(p1, p2, nrow = 2)
+ggsave("figures/all/umap/pdf_supp_fig2.pdf", width = 9, height = 9)
+
+# Number of visits
+p3 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = num_visits_study)) +
+  labs(color = "Number of visits (in study)") +
+  theme_minimal() +
+  scale_color_gradient(low = "plum1", high = "forestgreen") +
+  ggtitle("UCSF diagnosis UMAP - number of visits")
+p3
+ggsave("figures/all/umap/umap_num_visits.png", width = 7, height = 4)
+
+# Years in EHR
+p4 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = years_in_ehr_study)) +
+  labs(color = "Years in EHR (in study)") +
+  theme_minimal() +
+  scale_color_gradient(low = "plum1", high = "forestgreen") +
+  ggtitle("UCSF diagnosis UMAP - years in EHR")
+p4
+ggsave("figures/all/umap/umap_years_in_ehr.png", width = 7, height = 4)
+
+# Number of diagnoses
+p5 <- ggplot(umap_coords) +
+  geom_point(aes(x = x, y = y, color = num_diagnoses_study)) +
+  labs(color = "Number of diagnoses (in study)") +
+  theme_minimal() +
+  scale_color_gradient(low = "plum1", high = "forestgreen") +
+  ggtitle("UCSF diagnosis UMAP - number of diagnoses")
+p5
+ggsave("figures/all/umap/umap_num_diagnoses.png", width = 7, height = 4)
+
+# Combine HU umaps
+ggarrange(p3, p4, p5, nrow = 3)
+ggsave("figures/all/umap/pdf_supp_fig3.pdf", width = 9, height = 12)
+
+```
+
+### Basic stats about phenotypes
+
+```{r}
+
+# How many were tested?
+length(unique(stats_rpl_control$phenotype))
+# 1612
+
+# How many categories?
+length(unique(stats_rpl_control$category))
+# 18
+
+# How many were significant?
+length(unique(filter(stats_rpl_control, adj_p_value_w_age_re < 0.05)$phenotype))
+# 120
+
+# How many were significantly positively associated?
+length(which(stats_rpl_control$odds_ratio_w_age_re > 1 & stats_rpl_control$adj_p_value_w_age_re < 0.05))
+# 51
+
+# How many were significantly negatively associated?
+length(which(stats_rpl_control$odds_ratio_w_age_re < 1 & stats_rpl_control$adj_p_value_w_age_re < 0.05))
+# 69
+
+```
+
+### Manhattan and volcano plots
+
+```{r}
+
+p1 <- ggplot(stats_rpl_control, aes(x = category, y = log_p_value, color = category, label = phenotype)) +
+  geom_jitter(show.legend = FALSE) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1), plot.margin = margin(t = 5, b = 5, l = 20, r = 5)) +
+  xlab("Diagnosis category") +
+  ylab("-log(p-value)") +
+  ggtitle("All associations tested at UCSF")
+p1
+ggsave("figures/all/manhattan/manhattan.png", height = 3, width = 7)
+
+stats_rpl_control_sig <- filter(stats_rpl_control, adj_p_value_w_age_re < 0.05)
+
+p2 <- ggplot(stats_rpl_control_sig) +
+  geom_point(aes(x = log_odds_ratio, y = log_p_value, color = Result)) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 100 | log_odds_ratio > 1.5 | (log_odds_ratio > 0.5 & log_p_value > 60), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3) +
+  theme_minimal() +
+  scale_color_manual(values = c("indianred2", "steelblue2", "grey")) +
+  labs(x = "Log odds ratio",
+       y = "Negative log p-value") +
+  ggtitle("Significant associations")
+p2
+ggsave("figures/all/volcano/volcano_sig_top.png", height = 5, width = 10)
+
+
+```
+
+### Numbers for age-stratified analysis
+
+```{r}
+
+# UNDER 35
+
+# How many were tested?
+length(unique(stats_rpl_control_u35$phenotype))
+# 1525
+
+# How many categories?
+length(unique(stats_rpl_control_u35$category))
+# 18
+
+# How many were significant?
+length(unique(filter(stats_rpl_control_u35, adj_p_value_w_age_re < 0.05)$phenotype))
+# 94
+
+# How many were significantly positively associated?
+length(which(stats_rpl_control_u35$odds_ratio_w_age_re > 1 & stats_rpl_control_u35$adj_p_value_w_age_re < 0.05))
+# 63
+
+# How many were significantly negatively associated?
+length(which(stats_rpl_control_u35$odds_ratio_w_age_re < 1 & stats_rpl_control_u35$adj_p_value_w_age_re < 0.05))
+# 31
+
+# OVER 35
+
+# How many were tested?
+length(unique(stats_rpl_control_o35$phenotype))
+# 1506
+
+# How many categories?
+length(unique(stats_rpl_control_o35$category))
+# 18
+
+# How many were significant?
+length(unique(filter(stats_rpl_control_o35, adj_p_value_w_age_re < 0.05)$phenotype))
+# 93
+
+# How many were significantly positively associated?
+length(which(stats_rpl_control_o35$odds_ratio_w_age_re > 1 & stats_rpl_control_o35$adj_p_value_w_age_re < 0.05))
+# 30
+
+# How many were significantly negatively associated?
+length(which(stats_rpl_control_o35$odds_ratio_w_age_re < 1 & stats_rpl_control_o35$adj_p_value_w_age_re < 0.05))
+# 63
+
+```
+
+### Comparing age-stratified results
+
+```{r}
+
+# Combine stats
+stats_age_stratified <- select(stats_rpl_control_u35, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(OR_u35 = odds_ratio_w_age_re, P_u35 = adj_p_value_w_age_re) %>%
+  inner_join(select(stats_rpl_control_o35, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re)) %>%
+  dplyr::rename(OR_o35 = odds_ratio_w_age_re, P_o35 = adj_p_value_w_age_re) %>%
+  mutate(logOR_u35 = log(OR_u35, base = 10),
+         logOR_o35 = log(OR_o35, base = 10)) %>%
+  mutate(Result = case_when(
+    P_u35 < 0.05 & P_o35 < 0.05 ~ "Significant in both",
+    P_u35 < 0.05 & P_o35 >= 0.05 ~ "Significant in <35",
+    P_u35 >= 0.05 & P_o35 < 0.05 ~ "Significant in 35+",
+    P_u35 >= 0.05 & P_o35 >= 0.05 ~ "Not significant"
+  )) %>%
+  left_join(select(stats_rpl_control, phenotype, rpl_count, control_count))
+stats_age_stratified$Result <- factor(stats_age_stratified$Result, levels = c("Significant in both", "Significant in <35", "Significant in 35+", "Not significant"))
+
+# How many are shared in both age strata analyses?
+length(unique(stats_age_stratified$phenotype))
+# 1419
+
+# What are the results?
+table(stats_age_stratified$Result)
+# Significant in both  Significant in <35  Significant in 35+     Not significant 
+#         59                  35                  34                1291
+
+# How many <35 ORs are > 35+ ORs? (for sig results)
+sum(filter(stats_age_stratified, Result != "Not significant")$OR_u35 > filter(stats_age_stratified, Result != "Not significant")$OR_o35)
+# 111
+
+# Correlations
+cor.test(filter(stats_age_stratified, Result != "Not significant")$OR_u35, filter(stats_age_stratified, Result != "Not significant")$OR_o35, method = "spearman")
+# 0.889203
+
+cor.test(filter(stats_age_stratified, Result != "Not significant")$OR_u35, filter(stats_age_stratified, Result != "Not significant")$OR_o35, method = "pearson")
+# -0.006594139
+# p-value = 0.9411
+
+```
+
+### Loglog plot for age-stratified analysis
+
+```{r}
+
+# Significant - at least 10 in rpl or control
+ggplot(filter(stats_age_stratified, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 - logOR_u35 > 0.25 | logOR_u35 < -1, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 - logOR_o35 > 0.85 | logOR_u35 > 1 | (logOR_u35 > 0 & logOR_o35 < 0 & Result == "Significant in both"), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -1.5, size = 2) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata")
+ggsave("figures/age_stratified/loglog/loglog_sig_10.png", height = 5, width = 7)
+
+```
+
+### Numbers for healthcare utilization sensitivity analysis
+
+```{r}
+
+# How many were tested?
+length(unique(stats_hu$phenotype))
+# 1612
+
+# How many were significant?
+length(unique(filter(stats_hu, adj_p_value_w_hu < 0.05)$phenotype))
+# 138
+
+# How many were significantly positively associated?
+length(which(stats_hu$odds_ratio_w_hu > 1 & stats_hu$adj_p_value_w_hu < 0.05))
+# 42
+
+# How many were significantly negatively associated?
+length(which(stats_hu$odds_ratio_w_hu < 1 & stats_hu$adj_p_value_w_hu < 0.05))
+# 96
+
+```
+
+### Comparing utilization results
+
+```{r}
+
+# Wrangle data for loglog plot
+stats_w_wo_hu <- select(stats_rpl_control, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(OR_woHU = odds_ratio_w_age_re, P_woHU = adj_p_value_w_age_re) %>%
+  inner_join(select(stats_hu, phenotype, odds_ratio_w_hu, adj_p_value_w_hu)) %>%
+  dplyr::rename(OR_wHU = odds_ratio_w_hu, P_wHU = adj_p_value_w_hu) %>%
+  mutate(logOR_woHU = log(OR_woHU, base = 10),
+         logOR_wHU = log(OR_wHU, base = 10)) %>%
+  mutate(Result = case_when(
+    P_woHU < 0.05 & P_wHU < 0.05 ~ "Significant in both",
+    P_woHU < 0.05 & P_wHU >= 0.05 ~ "Significant in main analysis",
+    P_woHU >= 0.05 & P_wHU < 0.05 ~ "Significant in sensitivity analysis",
+    P_woHU >= 0.05 & P_wHU >= 0.05 ~ "Not significant"
+  )) %>%
+  left_join(select(stats_rpl_control, phenotype, rpl_count, control_count))
+stats_w_wo_hu$Result <- factor(stats_w_wo_hu$Result, levels = c("Significant in both", "Significant in main analysis", "Significant in sensitivity analysis", "Not significant"))
+
+# How many are significant?
+length(unique(filter(stats_w_wo_hu, Result != "Not significant")$phenotype))
+# 148
+
+# What are the results?
+table(stats_w_wo_hu$Result)
+# Significant in both   Significant in main analysis   Significant in sensitivity analysis    Not significant
+#       110                          10                                  28                        1464 
+
+# Correlations
+cor.test(filter(stats_w_wo_hu, Result != "Not significant")$OR_woHU, filter(stats_w_wo_hu, Result != "Not significant")$OR_wHU, method = "spearman")
+# 0.9974976
+
+cor.test(filter(stats_w_wo_hu, Result != "Not significant")$OR_woHU, filter(stats_w_wo_hu, Result != "Not significant")$OR_wHU, method = "pearson")
+# 0.9996783
+
+# How many woHU ORs are > wHU ORs? (for sig results)
+sum(filter(stats_w_wo_hu, Result != "Not significant")$OR_woHU > filter(stats_w_wo_hu, Result != "Not significant")$OR_wHU)
+# 111
+
+# What's the average percent decrease in OR after adjusting for HU?
+median((stats_w_wo_hu$OR_woHU - stats_w_wo_hu$OR_wHU) / stats_w_wo_hu$OR_woHU) * 100
+# 12.73718
+
+```
+
+### Utilization loglog
+
+```{r}
+
+# Significant (labeled) - at least 10 in rpl or control
+ggplot(filter(stats_w_wo_hu, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_woHU, logOR_wHU, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("darkgoldenrod4", "violet", "yellowgreen", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_wHU - logOR_woHU > 0.1 | logOR_woHU < -0.9, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_woHU - logOR_wHU > 0.1 | logOR_woHU > 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -2, size = 2) +
+  labs(x = "Log odds ratio in main analysis",
+       y = "Log odds ratio in sensitivity analysis") +
+  ggtitle("Significant associations in main & sensitivity analysis")
+ggsave("figures/healthcare_utilization/loglog_sig_top_10.png", height = 5, width = 8)
+
+```
+
+### Save results files
+
+```{r}
+
+stats_ucsf <- stats_rpl_control
+stats_age_stratified_ucsf <- stats_age_stratified
+stats_w_wo_hu_ucsf <- stats_w_wo_hu
+
+save(stats_ucsf, stats_age_stratified_ucsf, stats_w_wo_hu_ucsf, file = "data/paper_figures_data/ucsf_stats.rda")
+
+```
+
+
+

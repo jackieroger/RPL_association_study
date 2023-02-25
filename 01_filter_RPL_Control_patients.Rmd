@@ -1,0 +1,342 @@
+---
+title: "01_filter_RPL_Control_patients.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(eeptools)
+
+```
+
+First, we queried the UCSF OMOP EHR database to identify patients that met the initial inclusion criteria for the RPL and Control groups. The RPL initial inclusion criteria was any record of pregnancy loss (as defined in the pregnancy loss, recurrent pregnancy loss, and history of pregnancy loss sections of Supplementary File 1). The Control initial inclusion criteria was any record of live-birth (as defined in the live-birth section of Supplementary File 1). Then, we queried the included RPL and Control patients' demographics, conditions, observations, procedures, and visits.
+
+This Rmd takes the results of the above described queries as inputs. For example, RPL_person contains a subset of the OMOP person table for individuals that met the initial inclusion criteria for the RPL group. FTB_person (FTB = full-term birth) contains a subset of the OMOP person table for individuals that met the initial inclusion criteria for the Control group. The rest of the tables (conditions, observations, procedures, visits) are similar subsets for the RPL and Control patients, respectively.
+
+Concept contains the OMOP concept table. All_criteria contains all the curated phenotype concept lists (included in Supplementary File 1).
+
+### Load data
+
+```{r, message = FALSE}
+
+RPL_person <- read_tsv("data/from_rae/health_histories/RPL_person.txt")
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+RPL_observation <- read_tsv("data/from_rae/health_histories/RPL_observation.txt")
+RPL_procedure_occurrence <- read_tsv("data/from_rae/health_histories/RPL_procedure_occurrence.txt")
+RPL_visit_occurrence <- read_tsv("data/from_rae/health_histories/RPL_visit_occurrence.txt")
+FTB_person <- read_tsv("data/from_rae/health_histories/FTB_person.txt")
+FTB_condition_occurrence <- read_tsv("data/from_rae/health_histories/FTB_condition_occurrence.txt")
+FTB_observation <- read_tsv("data/from_rae/health_histories/FTB_observation.txt")
+FTB_procedure_occurrence <- read_tsv("data/from_rae/health_histories/FTB_procedure_occurrence.txt")
+FTB_visit_occurrence <- read_tsv("data/from_rae/health_histories/FTB_visit_occurrence.txt")
+concept <- read_tsv("data/from_rae/criteria_concepts/concept.txt", col_types = cols(.default = col_character()))
+load("data/cohort_selection/all_criteria.rda")
+
+```
+
+### Make a function for finding occurrences of something
+
+```{r}
+
+find_occurrences <- function(something_concepts, co, po, o) {
+  # Find each occurrence
+  something_occurrences_co <- co %>%
+    subset(condition_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "condition_start_date",
+           "concept_id" = "condition_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_po <- po %>%
+    subset(procedure_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "procedure_date",
+           "concept_id" = "procedure_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_o <- o %>%
+    subset(observation_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "observation_date",
+           "concept_id" = "observation_concept_id") %>%
+    select(person_id, concept_id, date)
+  # Combine occurrences
+  something_occurrences <- rbind(something_occurrences_co, something_occurrences_po, something_occurrences_o) %>%
+  distinct() %>%
+    mutate(date = as.Date(date))
+  return (something_occurrences)
+}
+
+```
+
+### Assess RPL inclusion criteria and assign t0
+t0 = earliest date that there is evidence a patient has RPL at ucsf
+
+```{r, warning = FALSE}
+
+# Find official rpl pts and their earliest rpl dx
+RPL_t0 <- find_occurrences(RPL_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation) %>%
+  group_by(person_id) %>%
+  mutate(earliest_rpl_dx = min(date)) %>%
+  ungroup() %>%
+  select(person_id, earliest_rpl_dx) %>%
+  distinct()
+
+# Find PL occurrences
+PL_occurrences <- find_occurrences(PL_SG_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation)
+
+# Find the first two PLs (when applicable)
+# They must be at least 90 days apart
+first_two_PLs_raw <- PL_occurrences %>%
+    group_by(person_id) %>%
+    arrange(date) %>%
+    # Locate first PL
+    mutate(pl1 = case_when(date == min(date) ~ TRUE),
+           # Date of first PL
+           pl1_date = min(date),
+           # 90 days after first PL
+           pl1_90 = pl1_date + 90,
+           # Number of days AFTER 90 days after first PL
+           pl1_90_days = case_when(date - pl1_90 >= 0 ~ date - pl1_90),
+           # Find the PL that occurs soonest after 90 days after first PL
+           pl2 = case_when(pl1_90_days == min(pl1_90_days, na.rm = TRUE) ~ TRUE),
+           # Find the date of PL2
+           pl2_date = case_when(pl2 == TRUE ~ date),
+           # Fill in the PL2 date for the remaining rows (the min function is arbitrary here)
+           pl2_date = min(pl2_date, na.rm = TRUE)) %>%
+  ungroup()
+
+# Filter
+first_two_PLs <- first_two_PLs_raw %>%
+  select(-c(pl1_90, pl1_90_days)) %>%
+  filter(pl1 == TRUE | pl2 == TRUE) %>%
+  mutate(two_pls = ifelse(!is.infinite(pl2_date), TRUE, FALSE))
+
+# Find hpl pts and their earliest hpl dx
+HPL_t0 <- find_occurrences(HO_PL_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation) %>%
+  group_by(person_id) %>%
+  mutate(earliest_hpl_dx = min(date)) %>%
+  ungroup() %>%
+  select(person_id, earliest_hpl_dx) %>%
+  distinct()
+
+# Combine all RPL info
+RPL_inclusion <- full_join(RPL_t0, HPL_t0) %>%
+  full_join(first_two_PLs) %>%
+  arrange(person_id) %>%
+  mutate(rpl_dx = ifelse(!is.na(earliest_rpl_dx), TRUE, FALSE),
+         hpl_pl = ifelse(earliest_hpl_dx < pl1_date, TRUE, FALSE)) %>%
+  filter(rpl_dx == TRUE | hpl_pl == TRUE | two_pls == TRUE) %>%
+  select(-c(date, concept_id, pl1, pl2)) %>%
+  distinct()
+RPL_inclusion$two_pls[is.na(RPL_inclusion$two_pls)] <- FALSE
+RPL_inclusion$hpl_pl[is.na(RPL_inclusion$hpl_pl)] <- FALSE
+
+# Find t0s
+RPL_inclusion <- RPL_inclusion %>%
+  group_by(person_id) %>%
+  mutate(t0 = case_when(
+    hpl_pl == TRUE ~ min(earliest_rpl_dx, pl1_date, na.rm = TRUE),
+    hpl_pl == FALSE ~ min(earliest_rpl_dx, pl2_date, na.rm = TRUE)
+  )) %>%
+  ungroup()
+
+# How many patients have an RPL dx?
+length(unique(filter(RPL_inclusion, rpl_dx == TRUE)$person_id))
+# 3803
+
+# How many patients have at least two PLs?
+length(unique(filter(RPL_inclusion, two_pls == TRUE)$person_id))
+# 2255
+
+# How many patients have PL history, then loss?
+length(unique(filter(RPL_inclusion, hpl_pl == TRUE)$person_id))
+# 3
+
+# How many RPL patients are included in total?
+length(unique(RPL_inclusion$person_id))
+# 5297
+
+# Save
+save(RPL_inclusion, file = "data/cohorts/RPL_inclusion.rda")
+
+```
+
+### Build initial RPL cohort
+
+```{r}
+
+# Pull out demographic concepts
+demo_concepts <- filter(concept, concept_id %in% c(RPL_person$ethnicity_concept_id, RPL_person$race_concept_id))
+demo_concepts$concept_id <- as.numeric(demo_concepts$concept_id)
+
+# Build RPL cohort
+RPL <- select(RPL_inclusion, person_id, t0) %>%
+  left_join(RPL_person) %>%
+  mutate(gender_concept_id = as.character(gender_concept_id)) %>%
+  left_join(select(filter(concept, domain_id == "Gender"), concept_id, concept_name) %>%
+              dplyr::rename(gender = concept_name), by = c("gender_concept_id" = "concept_id")) %>%
+  mutate(birthdate = as.Date(paste(year_of_birth, month_of_birth, day_of_birth, sep="-"),"%Y-%m-%d"),
+         age_t0 = as.numeric((t0 - birthdate)/365)) %>%
+  left_join(select(demo_concepts, concept_id, concept_name), by = c("ethnicity_concept_id" = "concept_id")) %>%
+  dplyr::rename("ethnicity" = "concept_name") %>%
+  left_join(select(demo_concepts, concept_id, concept_name), by = c("race_concept_id" = "concept_id")) %>%
+  dplyr::rename("race" = "concept_name") %>%
+  select(person_id, t0, age_t0, birthdate, gender, race, ethnicity)
+
+# How many RPL patients are there based on inclusion criteria?
+length(unique(RPL$person_id))
+# 5297
+
+# Save
+save(RPL, file = "data/cohorts/RPL_raw.rda")
+
+```
+
+### Find people in each exclusion criteria for control cohort
+
+```{r}
+
+ptb_occurrences <- find_occurrences(PTB_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+ep_occurrences <- find_occurrences(EP_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+mgpl_occurrences <- find_occurrences(PL_MG_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+pl_occurrences <- find_occurrences(PL_SG_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+hpl_occurrences <- find_occurrences(HO_PL_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+rpl_occurrences <- find_occurrences(RPL_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation)
+
+```
+
+### Build initial control cohort
+
+```{r}
+
+# Find FTBs
+ftb_people <- find_occurrences(FTB_concept_filtered, FTB_condition_occurrence, FTB_procedure_occurrence, FTB_observation) %>%
+  group_by(person_id) %>%
+  dplyr::summarise(t0 = min(date)) %>%
+  ungroup() %>%
+  select(person_id, t0)
+
+# How many control patients are there based on inclusion criteria?
+length(unique(ftb_people$person_id))
+# 85860
+
+# Build control cohort
+C <- ftb_people %>%
+  filter(!person_id %in% dplyr::bind_rows(ptb_occurrences, ep_occurrences, mgpl_occurrences, pl_occurrences, hpl_occurrences, rpl_occurrences)$person_id) %>%
+  left_join(FTB_person) %>%
+  mutate(gender_concept_id = as.character(gender_concept_id)) %>%
+  left_join(select(filter(concept, domain_id == "Gender"), concept_id, concept_name) %>%
+              dplyr::rename(gender = concept_name), by = c("gender_concept_id" = "concept_id")) %>%
+  mutate(birthdate = as.Date(paste(year_of_birth, month_of_birth, day_of_birth, sep="-"),"%Y-%m-%d"),
+         age_t0 = as.numeric((t0 - birthdate)/365)) %>%
+  left_join(select(demo_concepts, concept_id, concept_name), by = c("ethnicity_concept_id" = "concept_id")) %>%
+  dplyr::rename("ethnicity" = "concept_name") %>%
+  left_join(select(demo_concepts, concept_id, concept_name), by = c("race_concept_id" = "concept_id")) %>%
+  dplyr::rename("race" = "concept_name") %>%
+  select(person_id, t0, age_t0, birthdate, gender, race, ethnicity) %>%
+  distinct() %>%
+  arrange(person_id)
+
+# How many control patients are there once exclusion criteria has been applied?
+length(unique(C$person_id))
+# 77427
+
+# Save
+save(C, file = "data/cohorts/C_raw.rda")
+
+```
+
+### Filter cohorts based on age
+
+```{r}
+
+# Filter
+RPL <- filter(RPL, age_t0 >= 15 & age_t0 <= 44)
+C <- filter(C, age_t0 >= 15 & age_t0 <= 44)
+
+# How RPL patients remain?
+length(unique(RPL$person_id))
+# 4963
+
+# How control patients remain?
+length(unique(C$person_id))
+# 32041
+
+```
+
+### Filter for patients that could get pregnant (either female or incident pregnancy dx at any point)
+
+```{r}
+
+# Find pts with incident pregnancy dxs
+co_inc_preg <- filter(rbind(RPL_condition_occurrence, FTB_condition_occurrence), condition_concept_id == 4299535) %>%
+  distinct()
+
+# Filter for female or h/o incident pregnancy
+RPL <- filter(RPL, gender == "FEMALE" | person_id %in% co_inc_preg$person_id)
+C <- filter(C, gender == "FEMALE" | person_id %in% co_inc_preg$person_id)
+
+# How RPL patients remain?
+length(unique(RPL$person_id))
+# 4870
+
+# How control patients remain?
+length(unique(C$person_id))
+# 32009
+
+```
+
+### Ensure patients have records shorter than 100 years
+
+```{r}
+
+# RPL
+RPL <- RPL_visit_occurrence %>%
+  select(person_id, visit_start_date) %>%
+  distinct() %>%
+  group_by(person_id) %>%
+  dplyr::summarise(first_visit = min(visit_start_date),
+            last_visit = max(visit_start_date),
+            years_in_ehr = as.numeric(last_visit - first_visit) / 365,
+            num_visits = n()) %>%
+  filter(person_id %in% RPL$person_id) %>%
+  full_join(RPL)
+
+# C
+C <- FTB_visit_occurrence %>%
+  select(person_id, visit_start_date) %>%
+  distinct() %>%
+  group_by(person_id) %>%
+  dplyr::summarise(first_visit = min(visit_start_date),
+            last_visit = max(visit_start_date),
+            years_in_ehr = as.numeric(last_visit - first_visit) / 365,
+            num_visits = n()) %>%
+  filter(person_id %in% C$person_id) %>%
+  full_join(C)
+
+# Filter
+RPL <- filter(RPL, years_in_ehr < 100)
+C <- filter(C, years_in_ehr < 100)
+
+# How RPL patients remain?
+length(unique(RPL$person_id))
+# 4860
+
+# How control patients remain?
+length(unique(C$person_id))
+# 31943
+
+```
+
+### Save filtered cohorts
+These will get further filtered in Rmd 07 to exclude patients with 0 diagnoses in study period
+
+```{r}
+
+save(RPL, file = "data/cohorts/RPL_filtered.rda")
+save(C, file = "data/cohorts/C_filtered.rda")
+
+```
+
+

@@ -1,0 +1,264 @@
+---
+title: "11_compare_centers.Rmd"
+output: html_document
+date: '2023-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/stanford/stats_all.rda")
+stats_stanford <- stats_rpl_control
+stats_u35_stanford <- stats_rpl_control_u35
+stats_o35_stanford <- stats_rpl_control_o35
+load("data/stanford/stats_all_hu.rda")
+stats_hu_stanford <- stats_hu
+
+load("data/associations/stats_all.rda")
+stats_ucsf <- stats_rpl_control
+load("data/associations/stats_all_hu.rda")
+stats_hu_ucsf <- stats_hu
+
+```
+
+### Pull together results from main analysis
+
+```{r}
+
+# All results
+stats_ucsf_stanford <- select(stats_ucsf, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count) %>%
+  dplyr::rename(OR_ucsf = odds_ratio_w_age_re, P_ucsf = adj_p_value_w_age_re, rpl_count_ucsf = rpl_count, control_count_ucsf = control_count) %>%
+  inner_join(select(stats_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(OR_stanford = odds_ratio_w_age_re, P_stanford = adj_p_value_w_age_re, rpl_count_stanford = rpl_count, control_count_stanford = control_count) %>%
+  mutate(logOR_ucsf = log(OR_ucsf, base = 10),
+         logOR_stanford = log(OR_stanford, base = 10)) %>%
+  mutate(Result = case_when(
+    P_ucsf < 0.05 & P_stanford < 0.05 ~ "Significant in both",
+    P_ucsf < 0.05 & P_stanford >= 0.05 ~ "Significant at UCSF",
+    P_ucsf >= 0.05 & P_stanford < 0.05 ~ "Significant at Stanford",
+    P_ucsf >= 0.05 & P_stanford >= 0.05 ~ "Not significant"
+  ))
+stats_ucsf_stanford$Result <- factor(stats_ucsf_stanford$Result, levels = c("Significant in both", "Significant at UCSF", "Significant at Stanford", "Not significant"))
+
+# Results that are significant in both centers
+sig_in_both <- filter(stats_ucsf_stanford, Result == "Significant in both") %>%
+  mutate(Result = case_when(
+    OR_ucsf > 1 & OR_stanford > 1 ~ "Both significantly positive",
+    OR_ucsf < 1 & OR_stanford < 1 ~ "Both significantly negative",
+    TRUE ~ "Both significant, but discordant results",
+  ))
+sig_in_both$Result <- factor(sig_in_both$Result, levels = c("Both significantly positive", "Both significantly negative", "Both significant, but discordant results"))
+
+```
+
+### Hypergeometric tests
+Resources:
+1) https://rdrr.io/bioc/GeneOverlap/man/GeneOverlap.html
+2) https://cran.r-project.org/web/packages/BiasedUrn/BiasedUrn.pdf
+3) https://cran.r-project.org/web/packages/BiasedUrn/vignettes/UrnTheory.pdf
+
+```{r}
+
+# How many diagnoses were tested at both ucsf and stanford? (main)
+length(intersect(unique(stats_ucsf$phecode), unique(stats_stanford$phecode)))
+# 1576
+
+# POSITIVE - MAIN
+
+# How many diagnoses were significantly positive at both ucsf and stanford?
+sum(sig_in_both$Result == "Both significantly positive")
+# 42
+
+# What's the maximum intersect number? (main) (note to self: the min() function here is not a typo)
+min(length(which(stats_ucsf$odds_ratio_w_age_re > 1 & stats_ucsf$adj_p_value_w_age_re < 0.05)),
+    length(which(stats_stanford$odds_ratio_w_age_re > 1 & stats_stanford$adj_p_value_w_age_re < 0.05)))
+# 51
+
+# Hypergeometric test for overlap between ucsf and stanford results (main analysis)
+sum(dhyper(42:51, # number of white balls drawn
+           330, # number of white balls in urn
+           1576-330, # number of black balls in urn
+           51)) # number of balls drawn
+# p-value: 1.680169e-21
+
+# NEGATIVE - MAIN
+
+# How many diagnoses were significantly negative at both ucsf and stanford?
+sum(sig_in_both$Result == "Both significantly negative")
+# 34
+
+# What's the maximum intersect number? (main) (note to self: the min() function here is not a typo)
+min(length(which(stats_ucsf$odds_ratio_w_age_re < 1 & stats_ucsf$adj_p_value_w_age_re < 0.05)),
+    length(which(stats_stanford$odds_ratio_w_age_re < 1 & stats_stanford$adj_p_value_w_age_re < 0.05)))
+# 37
+
+# Hypergeometric test for overlap between ucsf and stanford results (main analysis)
+sum(dhyper(34:37, # number of white balls drawn
+           69, # number of white balls in urn
+           1576-69, # number of black balls in urn
+           37)) # number of balls drawn
+# p-value: 3.305351e-47
+
+```
+
+### Pull together results from utilization analysis
+
+```{r}
+
+stats_hu_ucsf_stanford <- select(stats_hu_ucsf, phenotype, odds_ratio_w_hu, adj_p_value_w_hu, rpl_count, control_count) %>%
+  dplyr::rename(OR_ucsf = odds_ratio_w_hu, P_ucsf = adj_p_value_w_hu, rpl_count_ucsf = rpl_count, control_count_ucsf = control_count) %>%
+  inner_join(select(stats_hu_stanford, phenotype, odds_ratio_w_hu, adj_p_value_w_hu, rpl_count, control_count)) %>%
+  dplyr::rename(OR_stanford = odds_ratio_w_hu, P_stanford = adj_p_value_w_hu, rpl_count_stanford = rpl_count, control_count_stanford = control_count) %>%
+  mutate(logOR_ucsf = log(OR_ucsf, base = 10),
+         logOR_stanford = log(OR_stanford, base = 10)) %>%
+  mutate(Result = case_when(
+    P_ucsf < 0.05 & P_stanford < 0.05 ~ "Significant in both",
+    P_ucsf < 0.05 & P_stanford >= 0.05 ~ "Significant at UCSF",
+    P_ucsf >= 0.05 & P_stanford < 0.05 ~ "Significant at Stanford",
+    P_ucsf >= 0.05 & P_stanford >= 0.05 ~ "Not significant"
+  ))
+stats_hu_ucsf_stanford$Result <- factor(stats_hu_ucsf_stanford$Result, levels = c("Significant in both", "Significant at UCSF", "Significant at Stanford", "Not significant"))
+
+# Sig in both (intersection)
+sig_in_both_hu <- filter(stats_hu_ucsf_stanford, Result == "Significant in both") %>%
+  mutate(Result = case_when(
+    OR_ucsf > 1 & OR_stanford > 1 ~ "Both significantly positive",
+    OR_ucsf < 1 & OR_stanford < 1 ~ "Both significantly negative",
+    TRUE ~ "Both significant, but discordant results",
+  ))
+sig_in_both_hu$Result <- factor(sig_in_both_hu$Result, levels = c("Both significantly positive", "Both significantly negative", "Both significant, but discordant results"))
+
+```
+
+### Comparing between centers after controlling for healthcare utilization
+
+```{r}
+
+# How many are significant with HU-adjustment?
+length(unique(filter(stats_hu_ucsf_stanford, Result == "Significant in both")$phenotype))
+# 90
+
+# What are the results from the HU analysis?
+table(sig_in_both_hu$Result)
+# Both significantly positive    Both significantly negative       Both significant, but discordant results 
+#           33                                       56                                        1
+
+# What is the overlap with the results from the main analysis?
+length(intersect(unique(sig_in_both$phenotype), unique(sig_in_both_hu$phenotype)))
+# 70
+
+# What is the overlap for validated positive associations?
+length(intersect(unique(filter(sig_in_both, Result == "Both significantly positive")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significantly positive")$phenotype)))
+# 33
+
+# What is the overlap for validated negative associations?
+length(intersect(unique(filter(sig_in_both, Result == "Both significantly negative")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significantly negative")$phenotype)))
+# 34
+
+# What is the overlap for discordant associations?
+length(intersect(unique(filter(sig_in_both, Result == "Both significant, but discordant results")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significant, but discordant results")$phenotype)))
+# 1
+
+# Which diagnoses are also in the overlap (are sig in both main & HU analysis, but different results label)
+filter(sig_in_both_hu, !phenotype %in% c(
+  intersect(unique(filter(sig_in_both, Result == "Both significantly positive")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significantly positive")$phenotype)),
+  intersect(unique(filter(sig_in_both, Result == "Both significantly negative")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significantly negative")$phenotype)),
+  intersect(unique(filter(sig_in_both, Result == "Both significant, but discordant results")$phenotype), unique(filter(sig_in_both_hu, Result == "Both significant, but discordant results")$phenotype))
+) & phenotype %in% sig_in_both$phenotype)
+# Constipation
+# Pruritus and related conditions
+
+```
+
+
+### Correlations between sig results
+
+```{r}
+
+cor.test(sig_in_both$OR_ucsf, sig_in_both$OR_stanford, method = "spearman")
+# 0.9458983
+
+cor.test(sig_in_both$OR_ucsf, sig_in_both$OR_stanford, method = "pearson")
+# 0.9999329
+
+cor.test(sig_in_both_hu$OR_ucsf, sig_in_both_hu$OR_stanford, method = "spearman")
+# 0.9443059
+
+cor.test(sig_in_both_hu$OR_ucsf, sig_in_both_hu$OR_stanford, method = "pearson")
+# 0.9999641
+
+# How many are higher at stanford in main?
+sum(sig_in_both$OR_stanford > sig_in_both$OR_ucsf)
+# 73
+
+# How many are higher at stanford in HU analysis?
+sum(sig_in_both_hu$OR_stanford > sig_in_both_hu$OR_ucsf)
+# 55
+
+```
+
+### Make loglog plot for main analysis
+
+```{r}
+
+ggplot(filter(sig_in_both, (rpl_count_ucsf >= 10 | control_count_ucsf >= 10) & (rpl_count_stanford >= 10 | control_count_stanford >= 10))) +
+  geom_point(aes(logOR_ucsf, logOR_stanford, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("palevioletred1", "skyblue2", "springgreen3")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf < -0.8 | (logOR_stanford - logOR_ucsf > 0.5), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2, size = 2) +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf > 1 | (logOR_ucsf - logOR_stanford > 0.2), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -2, size = 2) +
+  labs(x = "Log odds ratio in UCSF analysis",
+       y = "Log odds ratio in Stanford analysis") +
+  ggtitle("Both-significant associations in UCSF & Stanford analysis")
+ggsave("figures/stanford/loglog_both_10.png", height = 5, width = 8)
+
+```
+
+### Loglog plot for utilization analysis
+
+```{r}
+
+ggplot(filter(sig_in_both_hu, (rpl_count_ucsf >= 10 | control_count_ucsf >= 10) & (rpl_count_stanford >= 10 | control_count_stanford >= 10))) +
+  geom_point(aes(logOR_ucsf, logOR_stanford, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("palevioletred1", "skyblue2", "springgreen3")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf < -0.8 | (logOR_stanford - logOR_ucsf > 0.3), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2, size = 2) +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf > 1 | (logOR_ucsf - logOR_stanford > 0.3), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -2, size = 2) +
+  labs(x = "Log odds ratio in UCSF analysis",
+       y = "Log odds ratio in Stanford analysis") +
+  ggtitle("Both-significant associations in UCSF & Stanford analysis")
+ggsave("figures/stanford/loglog_both_hu_10.png", height = 5, width = 8)
+
+```
+
+### Save results data
+
+```{r}
+
+save(stats_ucsf_stanford, stats_hu_ucsf_stanford, sig_in_both, sig_in_both_hu, file = "data/paper_figures_data/center_stats.rda")
+
+```
+
+
+

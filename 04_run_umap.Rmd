@@ -1,0 +1,57 @@
+---
+title: "04_run_umap.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(umap)
+library(factoextra)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/phecodes/mappings/co.rda")
+
+```
+
+### Run UMAP for RPL vs control
+One hot encode conditions, excluding pregnancy complications
+
+```{r}
+
+# Combine co
+co_rpl_control <- rbind(co_rpl, co_control) %>%
+  filter(category != "pregnancy complications") %>%
+  select(person_id, phecode, phenotype) %>%
+  distinct()
+
+# Assign binary yes/no if each patient has each phenotype
+phenotypes_binary_rpl_control <- data.frame(unclass(table(co_rpl_control$person_id, co_rpl_control$phenotype)))
+phenotypes_binary_rpl_control[phenotypes_binary_rpl_control > 0] <- 1 
+phenotypes_binary_rpl_control <- phenotypes_binary_rpl_control %>%
+  tibble::rownames_to_column("person_id")
+phenotypes_binary_rpl_control$person_id <- as.numeric(phenotypes_binary_rpl_control$person_id)
+umap_input <- select(phenotypes_binary_rpl_control, -person_id)
+
+# Run UMAP
+umap_output <- umap(umap_input)
+umap_coords <- select(phenotypes_binary_rpl_control, person_id) %>%
+  cbind(data.frame(umap_output$layout)) %>%
+  dplyr::rename(x = "X1", y = "X2")
+
+# Save results
+save(umap_coords, file = "data/umap/umap_coords.rda")
+
+```
+
+
+
+

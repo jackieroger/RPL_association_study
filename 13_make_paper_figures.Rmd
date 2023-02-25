@@ -1,0 +1,215 @@
+---
+title: "13_make_paper_figures.Rmd"
+output: html_document
+date: '2023-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/paper_figures_data/center_stats.rda")
+load("data/paper_figures_data/ucsf_stats.rda")
+load("data/paper_figures_data/stanford_stats.rda")
+
+```
+
+### Figure 4: UCSF manhattan, volcano, and loglog plot
+
+```{r}
+
+stats_ucsf_sig <- filter(stats_ucsf, adj_p_value_w_age_re < 0.05)
+
+p1 <- ggplot(stats_ucsf, aes(x = category, y = log_p_value, color = category, label = phenotype)) +
+  geom_jitter(show.legend = FALSE) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1), plot.margin = margin(t = 5, b = 5, l = 20, r = 5)) +
+  xlab("Diagnosis category") +
+  ylab("Negative log p-value") +
+  ggtitle("All associations tested at UCSF")
+
+p2 <- ggplot(stats_ucsf_sig) +
+  geom_point(aes(x = log_odds_ratio, y = log_p_value, color = Result)) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 100 | log_odds_ratio > 1.5 | (log_odds_ratio > 0.5 & log_p_value > 60), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3) +
+  theme_minimal() +
+  scale_color_manual(values = c("indianred2", "steelblue2", "grey")) +
+  labs(x = "Log odds ratio",
+       y = "Negative log p-value") +
+  ggtitle("Significant associations at UCSF")
+
+p3 <- ggplot(filter(sig_in_both, (rpl_count_ucsf >= 10 | control_count_ucsf >= 10) & (rpl_count_stanford >= 10 | control_count_stanford >= 10))) +
+  geom_point(aes(logOR_ucsf, logOR_stanford, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("palevioletred1", "skyblue2", "springgreen3")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf < -0.8 | (logOR_stanford - logOR_ucsf > 0.5), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2, size = 3) +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf > 1 | (logOR_ucsf - logOR_stanford > 0.2), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = 0.5, nudge_y = -2.75, size = 3) +
+  labs(x = "Log odds ratio in UCSF analysis",
+       y = "Log odds ratio in Stanford analysis") +
+  ggtitle("Associations that are significant at both UCSF and Stanford")
+
+p4 <- ggarrange(p1, p2, p3, nrow = 3, labels = c("a", "b", "c"))
+ggsave("submission/raw_figures/fig4.pdf", height = 13, width = 8)
+
+```
+
+### Figure 5
+
+```{r}
+
+p1 <- ggplot(filter(stats_age_stratified_ucsf, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 - logOR_u35 > 0.25 | logOR_u35 < -1, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 > 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -1, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 > 1.5 & logOR_u35 < 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = 1, nudge_y = -3, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 > 1 & logOR_u35 < 1.5, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = 1.5, nudge_y = -0.5, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 > 0 & logOR_o35 < 0 & Result == "Significant in both", as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = 1.5, nudge_y = -0.5, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 - logOR_o35 > 0.9, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = -0.5, nudge_y = -1, size = 3) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata at UCSF")
+
+p2 <- ggplot(filter(stats_age_stratified_stanford, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 - logOR_u35 > 0.5 | logOR_u35 < -0.8, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2.5, size = 3) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 - logOR_o35 > 1 | logOR_u35 > 1.4 | (logOR_u35 > 0 & logOR_o35 < 0 & Result == "Significant in both"), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -1.5, size = 3) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata at Stanford (zoomed in)")
+
+p3 <- ggarrange(p1, p2, nrow = 2, labels = c("a", "b"))
+ggsave("submission/raw_figures/fig5.pdf", height = 10, width = 8)
+
+```
+
+### Figure 6
+
+```{r}
+
+# Significant (labeled) - at least 10 in rpl or control
+p1 <- ggplot(filter(stats_w_wo_hu_ucsf, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_woHU, logOR_wHU, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("darkgoldenrod4", "violet", "yellowgreen", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_wHU - logOR_woHU > 0.1 | logOR_woHU < -0.9, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 3) +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_woHU - logOR_wHU > 0.1 | logOR_woHU > 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -2, size = 3) +
+  labs(x = "Log odds ratio in main analysis",
+       y = "Log odds ratio in sensitivity analysis") +
+  ggtitle("Significant associations with and without control for healthcare utilization at UCSF")
+
+p2 <- ggplot(filter(stats_w_wo_hu_stanford, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_woHU, logOR_wHU, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("darkgoldenrod4", "violet", "yellowgreen", "grey")) +
+  xlim(-3,4) +
+  ylim(-3,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_wHU - logOR_woHU > 0.5 | logOR_woHU < -0.9, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 3) +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse((logOR_woHU - logOR_wHU > 0.8 & logOR_woHU < 0), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = -1, nudge_y = -1, size = 3) +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse((logOR_woHU - logOR_wHU > 0.8 & logOR_woHU > 0) | logOR_woHU > 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_x = 2, nudge_y = -1, size = 3) +
+  labs(x = "Log odds ratio in main analysis",
+       y = "Log odds ratio in sensitivity analysis") +
+  ggtitle("Significant associations with and without control for healthcare utilization at Stanford")
+
+p3 <- ggplot(filter(sig_in_both_hu, (rpl_count_ucsf >= 10 | control_count_ucsf >= 10) & (rpl_count_stanford >= 10 | control_count_stanford >= 10))) +
+  geom_point(aes(logOR_ucsf, logOR_stanford, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("palevioletred1", "skyblue2", "springgreen3")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf < -0.8 | (logOR_stanford - logOR_ucsf > 0.3), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 2, size = 3) +
+  geom_label_repel(aes(logOR_ucsf, logOR_stanford, color = Result, label = ifelse(logOR_ucsf > 1 | (logOR_ucsf - logOR_stanford > 0.3), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -2.5, size = 3) +
+  labs(x = "Log odds ratio in UCSF analysis",
+       y = "Log odds ratio in Stanford analysis") +
+  ggtitle("Significant associations at both UCSF and Stanford with control for healthcare utilization")
+
+p4 <- ggarrange(p1, p2, p3, nrow = 3, labels = c("a", "b", "c"))
+ggsave("submission/raw_figures/fig6.pdf", height = 12, width = 8)
+
+```
+
+### Supplementary Figure 6
+
+```{r}
+
+p1 <- ggplot(stats_stanford, aes(x = category, y = log_p_value, color = category, label = phenotype)) +
+  geom_jitter(show.legend = FALSE) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1), plot.margin = margin(t = 5, b = 5, l = 20, r = 5)) +
+  xlab("Diagnosis category") +
+  ylab("Negative log p-value") +
+  ggtitle("All associations tested at Stanford")
+
+p2 <- ggplot(filter(stats_stanford, adj_p_value_w_age_re < 0.05)) +
+  geom_point(aes(x = log_odds_ratio, y = log_p_value, color = Result)) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 120 & log_p_value < 150, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3, nudge_y = 30) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 200, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3, nudge_y = -30) +
+  theme_minimal() +
+  scale_color_manual(values = c("indianred2", "steelblue2", "grey")) +
+  labs(x = "Log odds ratio",
+       y = "Negative log p-value") +
+  ggtitle("Significant associations at Stanford")
+
+p3 <- ggarrange(p1, p2, nrow = 2, labels = c("a", "b"))
+ggsave("submission/raw_figures/supp_fig6.pdf", height = 8, width = 8)
+
+```
+
+### Supplementary Figure 7
+
+```{r}
+
+ggplot(filter(stats_age_stratified_stanford, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 < -10, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata at Stanford (zoomed out)")
+ggsave("submission/raw_figures/supp_fig7.pdf", height = 6, width = 6)
+
+```
+
+Note: The UCSF UMAP figures were created in Rmd 08. The Stanford UMAP figures were created by Feng Xie, by applying the code in Rmd 08 to Stanford patient data.

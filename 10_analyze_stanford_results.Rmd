@@ -1,0 +1,222 @@
+---
+title: "10_analyze_stanford_results.Rmd"
+output: html_document
+date: '2023-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/stanford/stats_all.rda")
+stats_stanford <- stats_rpl_control
+stats_u35_stanford <- stats_rpl_control_u35
+stats_o35_stanford <- stats_rpl_control_o35
+load("data/stanford/stats_all_hu.rda")
+stats_hu_stanford <- stats_hu
+
+```
+
+### Stanford manhattan and volcano plots
+
+```{r}
+
+stats_stanford <- stats_stanford %>%
+  mutate(log_odds_ratio = log(odds_ratio_w_age_re, base = 10),
+         log_p_value = -log(adj_p_value_w_age_re, base = 10))
+
+stats_stanford <- stats_stanford %>%
+  mutate(Result = factor(case_when(
+    adj_p_value_w_age_re < 0.05 & log_odds_ratio > 0 ~ "Positive",
+    adj_p_value_w_age_re < 0.05 & log_odds_ratio < 0 ~ "Negative",
+    TRUE ~ "Not significant"), levels = c("Positive", "Negative", "Not significant")
+  ))
+
+ggplot(stats_stanford, aes(x = category, y = log_p_value, color = category, label = phenotype)) +
+  geom_jitter(show.legend = FALSE) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1), plot.margin = margin(t = 5, b = 5, l = 20, r = 5)) +
+  xlab("Diagnosis category") +
+  ylab("-log(p-value)") +
+  ggtitle("Associations tested per diagnosis category")
+ggsave("figures/stanford/manhattan.png", height = 3, width = 7)
+
+# Top associations
+ggplot(filter(stats_stanford, adj_p_value_w_age_re < 0.05)) +
+  geom_point(aes(x = log_odds_ratio, y = log_p_value, color = Result)) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 120 & log_p_value < 150, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3, nudge_y = 3) +
+  geom_label_repel(aes(x = log_odds_ratio, y = log_p_value, color = Result, label = ifelse(log_p_value > 200, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), size = 3, nudge_y = -2) +
+  theme_minimal() +
+  scale_color_manual(values = c("indianred2", "steelblue2", "grey")) +
+  labs(x = "Log odds ratio",
+       y = "Negative log p-value") +
+  ggtitle("Significant associations")
+ggsave("figures/stanford/volcano.png", height = 5, width = 10)
+
+```
+
+### Stanford age-stratified loglog
+
+```{r}
+
+# Combine stats
+stats_age_stratified_stanford <- select(stats_u35_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(OR_u35 = odds_ratio_w_age_re, P_u35 = adj_p_value_w_age_re) %>%
+  inner_join(select(stats_o35_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re)) %>%
+  dplyr::rename(OR_o35 = odds_ratio_w_age_re, P_o35 = adj_p_value_w_age_re) %>%
+  mutate(logOR_u35 = log(OR_u35, base = 10),
+         logOR_o35 = log(OR_o35, base = 10)) %>%
+  mutate(Result = case_when(
+    P_u35 < 0.05 & P_o35 < 0.05 ~ "Significant in both",
+    P_u35 < 0.05 & P_o35 >= 0.05 ~ "Significant in <35",
+    P_u35 >= 0.05 & P_o35 < 0.05 ~ "Significant in 35+",
+    P_u35 >= 0.05 & P_o35 >= 0.05 ~ "Not significant"
+  )) %>%
+  left_join(select(stats_stanford, phenotype, rpl_count, control_count))
+stats_age_stratified_stanford$Result <- factor(stats_age_stratified_stanford$Result, levels = c("Significant in both", "Significant in <35", "Significant in 35+", "Not significant"))
+
+# How many are shared in both age strata analyses?
+length(unique(stats_age_stratified_stanford$phenotype))
+# 1512
+
+# What are the results?
+table(stats_age_stratified_stanford$Result)
+# Significant in both  Significant in <35  Significant in 35+     Not significant 
+#          142                 136                  64                1170 
+
+# How many <35 ORs are > 35+ ORs? (for sig results)
+sum(filter(stats_age_stratified_stanford, Result != "Not significant")$OR_u35 > filter(stats_age_stratified_stanford, Result != "Not significant")$OR_o35)
+# 239
+
+# Correlations
+cor.test(filter(stats_age_stratified_stanford, Result != "Not significant")$OR_u35, filter(stats_age_stratified_stanford, Result != "Not significant")$OR_o35, method = "spearman")
+# 0.3652652
+
+cor.test(filter(stats_age_stratified_stanford, Result != "Not significant")$OR_u35, filter(stats_age_stratified_stanford, Result != "Not significant")$OR_o35, method = "pearson")
+# 0.002078911
+# p-value = 0.9694
+
+# Significant - at least 10 in rpl or control
+ggplot(filter(stats_age_stratified_stanford, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 < -10, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata")
+ggsave("figures/stanford/loglog_age_10.png", height = 5, width = 7)
+
+# Significant - at least 10 in rpl or control (zoomed in)
+ggplot(filter(stats_age_stratified_stanford, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_u35, logOR_o35, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("lightseagreen", "darkgoldenrod2", "mediumpurple2", "grey")) +
+  xlim(-2,4) +
+  ylim(-2,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_o35 - logOR_u35 > 0.5 | logOR_u35 < -0.8, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  geom_label_repel(aes(logOR_u35, logOR_o35, color = Result, label = ifelse(logOR_u35 - logOR_o35 > 0.9 | logOR_u35 > 1.2 | (logOR_u35 > 0 & logOR_o35 < 0 & Result == "Significant in both"), as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -1.5, size = 2) +
+  labs(x = "Log odds ratio for <35 patients",
+       y = "Log odds ratio for 35+ patients") +
+  ggtitle("Significant associations by age strata (zoomed in)")
+ggsave("figures/stanford/loglog_age_10_zoom.png", height = 5, width = 7)
+
+```
+
+### Stanford healthcare utilization
+
+```{r}
+
+stats_stanford_w_wo_hu <- select(stats_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(OR_woHU = odds_ratio_w_age_re, P_woHU = adj_p_value_w_age_re) %>%
+  inner_join(select(stats_hu_stanford, phenotype, odds_ratio_w_hu, adj_p_value_w_hu)) %>%
+  dplyr::rename(OR_wHU = odds_ratio_w_hu, P_wHU = adj_p_value_w_hu) %>%
+  mutate(logOR_woHU = log(OR_woHU, base = 10),
+         logOR_wHU = log(OR_wHU, base = 10)) %>%
+  mutate(Result = case_when(
+    P_woHU < 0.05 & P_wHU < 0.05 ~ "Significant in both",
+    P_woHU < 0.05 & P_wHU >= 0.05 ~ "Significant in main analysis",
+    P_woHU >= 0.05 & P_wHU < 0.05 ~ "Significant in sensitivity analysis",
+    P_woHU >= 0.05 & P_wHU >= 0.05 ~ "Not significant"
+  )) %>%
+  left_join(select(stats_stanford, phenotype, rpl_count, control_count))
+stats_stanford_w_wo_hu$Result <- factor(stats_stanford_w_wo_hu$Result, levels = c("Significant in both", "Significant in main analysis", "Significant in sensitivity analysis", "Not significant"))
+
+# Significant (labeled) - at least 10 in rpl or control
+ggplot(filter(stats_stanford_w_wo_hu, Result != "Not significant" & (rpl_count >= 10 | control_count >= 10))) +
+  geom_point(aes(logOR_woHU, logOR_wHU, color = Result)) +
+  theme_minimal() +
+  scale_color_manual(values = c("darkgoldenrod4", "violet", "yellowgreen", "grey")) +
+  xlim(-3,4) +
+  ylim(-3,4) +
+  geom_abline(slope = 1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_wHU - logOR_woHU > 0.5 | logOR_woHU < -0.9, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = 1, size = 2) +
+  geom_label_repel(aes(logOR_woHU, logOR_wHU, color = Result, label = ifelse(logOR_woHU - logOR_wHU > 0.8 | logOR_woHU > 2, as.character(phenotype), '')), show.legend = FALSE, min.segment.length = unit(0, 'lines'), nudge_y = -1, size = 2) +
+  labs(x = "Log odds ratio in main analysis",
+       y = "Log odds ratio in sensitivity analysis") +
+  ggtitle("Significant associations in main & sensitivity analysis")
+ggsave("figures/stanford/loglog_hu_10.png", height = 5, width = 8)
+
+# How many were tested?
+length(unique(stats_hu_stanford$phenotype))
+# 1662
+
+# How many were significant?
+length(unique(filter(stats_hu_stanford, adj_p_value_w_hu < 0.05)$phenotype))
+# 162
+
+# How many were significantly positively associated?
+length(which(stats_hu_stanford$odds_ratio_w_hu > 1 & stats_hu_stanford$adj_p_value_w_hu < 0.05))
+# 56
+
+# How many were significantly negatively associated?
+length(which(stats_hu_stanford$odds_ratio_w_hu < 1 & stats_hu_stanford$adj_p_value_w_hu < 0.05))
+# 106
+
+# What are the results?
+table(stats_stanford_w_wo_hu$Result)
+# Significant in both   Significant in main analysis   Significant in sensitivity analysis    Not significant
+#       108                         259                                  54                        1241 
+
+# Correlations
+cor.test(filter(stats_stanford_w_wo_hu, Result != "Not significant")$OR_woHU, filter(stats_stanford_w_wo_hu, Result != "Not significant")$OR_wHU, method = "spearman")
+# 0.9120143
+
+cor.test(filter(stats_stanford_w_wo_hu, Result != "Not significant")$OR_woHU, filter(stats_stanford_w_wo_hu, Result != "Not significant")$OR_wHU, method = "pearson")
+# 0.9999358
+
+# What's the average percent decrease in OR after adjusting for HU?
+median((stats_stanford_w_wo_hu$OR_woHU - stats_stanford_w_wo_hu$OR_wHU) / stats_stanford_w_wo_hu$OR_woHU) * 100
+# 49.11031
+
+```
+
+### Save results data
+
+```{r}
+
+stats_w_wo_hu_stanford <- stats_stanford_w_wo_hu
+
+save(stats_stanford, stats_age_stratified_stanford, stats_w_wo_hu_stanford, file = "data/paper_figures_data/stanford_stats.rda")
+
+```
+
+

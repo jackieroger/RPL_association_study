@@ -1,0 +1,127 @@
+---
+title: "02_map_to_phecodes.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(tidyr)
+
+```
+
+### Load data
+
+```{r}
+
+# Cohorts
+load("data/cohorts/RPL_filtered.rda")
+load("data/cohorts/C_filtered.rda")
+
+# Conditions
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+FTB_condition_occurrence <- read_tsv("data/from_rae/health_histories/FTB_condition_occurrence.txt")
+
+# Reference tables
+concept <- read_tsv("data/from_rae/criteria_concepts/concept.txt", col_types = cols(.default = col_character()))
+concept$concept_id <- as.numeric(concept$concept_id)
+icd9_to_phecode <- read.csv("data/phecodes/definitions/phecode_icd9_rolled.csv")
+icd10_to_phecode <- read.csv("data/phecodes/definitions/Phecode_map_v1_2_icd10cm_beta.csv")
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+
+```
+
+### Map conditions to phecodes
+
+```{r}
+
+# Pull together conditions
+co <- rbind(RPL_condition_occurrence, FTB_condition_occurrence) %>%
+  filter(person_id %in% RPL$person_id | person_id %in% C$person_id) %>%
+  select(condition_concept_id, condition_source_value) %>%
+  distinct()
+
+# Find ICD diagnoses
+diagnoses_all <- left_join(select(co, condition_source_value),
+  filter(select(concept, vocabulary_id, concept_code), vocabulary_id %in% c("ICD10", "ICD10CM", "ICD9", "ICD9CM")),
+  by = c("condition_source_value" = "concept_code")) %>%
+  distinct()
+
+# Pull out the source values
+icd_source_values <- filter(diagnoses_all, vocabulary_id %in% c("ICD10", "ICD10CM", "ICD9", "ICD9CM")) %>%
+  select(condition_source_value) %>%
+  distinct()
+
+# Make phecode map
+icd9_map <- icd9_to_phecode %>%
+  select(ICD9, PheCode) %>%
+  dplyr::rename(icd = ICD9, phecode = PheCode) %>%
+  mutate(version = 9)
+icd10_map <- icd10_to_phecode %>%
+  select(icd10cm, phecode) %>%
+  dplyr::rename(icd = icd10cm) %>%
+  mutate(version = 10)
+phecode_map <- rbind(icd9_map, icd10_map)
+phecode_map$phecode <- as.numeric(phecode_map$phecode)
+phecode_map <- phecode_map %>%
+  distinct() %>%
+  left_join(phecode_definitions)
+
+# Map to phecodes
+icd_to_phecode_mappings <- icd_source_values %>%
+  left_join(select(phecode_map, icd, phecode, phenotype, category), by = c("condition_source_value" = "icd")) %>%
+  distinct() %>%
+  drop_na()
+
+# Save icd phecode mappings
+save(icd_to_phecode_mappings, file = "data/phecodes/mappings/icd_to_phecode_mappings.rda")
+
+```
+
+### Connect concepts with phecodes
+
+```{r}
+
+# RPL
+co_rpl <- left_join(RPL_condition_occurrence, icd_to_phecode_mappings) %>%
+  drop_na() %>%
+  inner_join(RPL) %>%
+  filter(condition_start_date < (t0 + 365))
+
+# Control
+co_control <- left_join(FTB_condition_occurrence, icd_to_phecode_mappings) %>%
+  drop_na() %>%
+  inner_join(C) %>%
+  filter(condition_start_date < (t0 + 365))
+
+# Save
+save(co_rpl, co_control, file = "data/phecodes/mappings/co.rda")
+
+```
+
+### Filter cohorts to exclude patients with 0 diagnoses during study period
+
+```{r}
+
+RPL <- filter(RPL, person_id %in% co_rpl$person_id)
+C <- filter(C, person_id %in% co_control$person_id)
+
+# How RPL patients remain?
+length(unique(RPL$person_id))
+# 3840
+
+# How control patients remain?
+length(unique(C$person_id))
+# 17259
+
+save(RPL, file = "data/cohorts/RPL.rda")
+save(C, file = "data/cohorts/C.rda")
+
+```
+
+
+

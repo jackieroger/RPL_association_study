@@ -1,0 +1,231 @@
+---
+title: "09_make_results_tables.Rmd"
+output: html_document
+date: '2023-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(writexl)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/stanford/stats_all.rda")
+stats_stanford <- stats_rpl_control
+
+load("data/associations/stats_all.rda")
+stats_ucsf <- stats_rpl_control
+
+```
+
+### Compute some basic stats
+
+```{r}
+
+# How many associations were tested at stanford?
+length(unique(stats_stanford$phecode))
+# 1662
+
+# How many were significant?
+length(unique(filter(stats_stanford, adj_p_value_w_age_re < 0.05)$phenotype))
+# 367
+
+# How many were significantly positively associated?
+length(which(stats_stanford$odds_ratio_w_age_re > 1 & stats_stanford$adj_p_value_w_age_re < 0.05))
+# 330
+
+# How many were significantly negatively associated?
+length(which(stats_stanford$odds_ratio_w_age_re < 1 & stats_stanford$adj_p_value_w_age_re < 0.05))
+# 37
+
+# How many were significantly positive in both?
+length(intersect(filter(stats_stanford, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode,
+                 filter(stats_ucsf, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode))
+# 42
+
+# How many were significantly negative in both?
+length(intersect(filter(stats_stanford, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)$phecode,
+                 filter(stats_ucsf, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)$phecode))
+# 34
+
+# How many were sig pos at ucsf and sig neg at stanford?
+length(intersect(filter(stats_stanford, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)$phecode,
+                 filter(stats_ucsf, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode))
+# 0
+
+# How many were sig neg at ucsf and sig pos at stanford?
+length(intersect(filter(stats_stanford, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode,
+                 filter(stats_ucsf, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)$phecode))
+# 12
+
+```
+
+### Function for prepping results table
+
+```{r}
+
+prep_table <- function(unprepped_table) {
+  prepped_table <- unprepped_table %>%
+    mutate(ucsf_count_under10 = ifelse(rpl_count_ucsf < 10 | control_count_ucsf < 10, TRUE, FALSE),
+           stanford_count_under10 = ifelse(rpl_count_stanford < 10 | control_count_stanford < 10, TRUE, FALSE),
+           ucsf_pval_under0 = ifelse(adj_p_value_w_age_re_ucsf < 0.001, TRUE, FALSE),
+           stanford_pval_under0 = ifelse(adj_p_value_w_age_re_stanford < 0.001, TRUE, FALSE),
+           odds_ratio_w_age_re_ucsf = round(odds_ratio_w_age_re_ucsf, 2),
+           adj_p_value_w_age_re_ucsf = round(adj_p_value_w_age_re_ucsf, 3),
+           odds_ratio_w_age_re_stanford = round(odds_ratio_w_age_re_stanford, 2),
+           adj_p_value_w_age_re_stanford = round(adj_p_value_w_age_re_stanford, 3)) %>%
+    dplyr::rename(Diagnosis = phenotype,
+                  `UCSF odds ratio` = odds_ratio_w_age_re_ucsf,
+                  `UCSF p-value` = adj_p_value_w_age_re_ucsf,
+                  `Stanford odds ratio` = odds_ratio_w_age_re_stanford,
+                  `Stanford p-value` = adj_p_value_w_age_re_stanford)
+  prepped_table$rpl_count_ucsf <- as.character(prepped_table$rpl_count_ucsf)
+  prepped_table$rpl_count_stanford <- as.character(prepped_table$rpl_count_stanford)
+  prepped_table$`UCSF p-value` <- as.character(prepped_table$`UCSF p-value`)
+  prepped_table$`Stanford p-value` <- as.character(prepped_table$`Stanford p-value`)
+  prepped_table <- prepped_table %>%
+    mutate(`UCSF p-value` = ifelse(ucsf_count_under10 == TRUE, "<0.05",
+                              ifelse(ucsf_pval_under0 == TRUE, "<0.001", `UCSF p-value`)),
+           `Stanford p-value` = ifelse(stanford_count_under10 == TRUE, "<0.05",
+                                       ifelse(stanford_pval_under0 == TRUE, "<0.001", `Stanford p-value`)),
+           `UCSF odds ratio` = ifelse(ucsf_count_under10 == FALSE, `UCSF odds ratio`,
+                                      ifelse(as.numeric(`UCSF odds ratio`) > 1, ">1", "<1")),
+           `Stanford odds ratio` = ifelse(stanford_count_under10 == TRUE, ">1", `Stanford odds ratio`)) %>%
+    select(`Diagnosis`, `UCSF odds ratio`, `UCSF p-value`, `Stanford odds ratio`, `Stanford p-value`, `Theme`) %>%
+    arrange(Theme, Diagnosis)
+  return (prepped_table)
+}
+
+```
+
+### Pull out validated positive associations
+
+```{r}
+
+# Pull out overlap
+both_pos <- filter(stats_ucsf, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05) %>%
+  filter(phecode %in% filter(stats_stanford, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode) %>%
+  arrange(category) %>%
+  select(phenotype) %>%
+  left_join(select(stats_ucsf, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_ucsf = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_ucsf = adj_p_value_w_age_re,
+                rpl_count_ucsf = rpl_count,
+                control_count_ucsf = control_count) %>%
+  left_join(select(stats_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_stanford = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_stanford = adj_p_value_w_age_re,
+                rpl_count_stanford = rpl_count,
+                control_count_stanford = control_count) %>%
+  select(phenotype, odds_ratio_w_age_re_ucsf, adj_p_value_w_age_re_ucsf, odds_ratio_w_age_re_stanford, adj_p_value_w_age_re_stanford, rpl_count_ucsf, control_count_ucsf, rpl_count_stanford, control_count_stanford)
+
+# Known associations
+known_associations <- filter(both_pos, grepl("hemorrhage|anomalies|thyroid|pituitary|polyp|incompetence|hypercoagulable|complications|multiple|miscarriage|premature", phenotype, ignore.case = TRUE)) %>%
+  filter(!grepl("complications|ovarian", phenotype, ignore.case = TRUE)) %>%
+  mutate(Theme = "Known RPL associations")
+
+# Menstrual abnormalities
+menstrual_abnormalities <- filter(both_pos, grepl("menstrua|menorr", phenotype, ignore.case = TRUE)) %>%
+  mutate(Theme = "Menstrual abnormalities")
+
+# Infertility conditions
+infertility_conditions <- filter(both_pos, grepl("fert|premature menopause|endometriosis|ovarian dysfunction|polycystic", phenotype, ignore.case = TRUE)) %>%
+  mutate(Theme = "Infertility-associated diagnoses")
+
+# Infections
+infections <- filter(both_pos, grepl("itis|inflammatory disease|tissue|immun", phenotype, ignore.case = TRUE)) %>%
+  filter(!grepl("thyroid", phenotype, ignore.case = TRUE)) %>%
+  mutate(Theme = "Infections & immunological conditions")
+
+# The rest
+other_pos <- filter(both_pos, !(phenotype %in% c(known_associations$phenotype, menstrual_abnormalities$phenotype, infertility_conditions$phenotype, infections$phenotype))) %>%
+  mutate(Theme = "Other")
+
+# Combine
+positive_results_raw <- bind_rows(known_associations, menstrual_abnormalities, infertility_conditions, infections, other_pos)
+positive_results_raw$Theme <- factor(positive_results_raw$Theme, levels = c("Known RPL associations", "Menstrual abnormalities", "Infertility-associated diagnoses", "Infections & immunological conditions", "Other"))
+positive_results <- prep_table(positive_results_raw)
+
+positive_results
+
+```
+
+### Make a table for validated negative associations
+
+```{r}
+
+# Pull out overlap
+both_neg <- filter(stats_ucsf, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05) %>%
+  filter(phecode %in% filter(stats_stanford, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)$phecode) %>%
+  arrange(category) %>%
+  select(phenotype) %>%
+  left_join(select(stats_ucsf, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_ucsf = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_ucsf = adj_p_value_w_age_re,
+                rpl_count_ucsf = rpl_count,
+                control_count_ucsf = control_count) %>%
+  left_join(select(stats_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_stanford = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_stanford = adj_p_value_w_age_re,
+                rpl_count_stanford = rpl_count,
+                control_count_stanford = control_count) %>%
+  select(phenotype, odds_ratio_w_age_re_ucsf, adj_p_value_w_age_re_ucsf, odds_ratio_w_age_re_stanford, adj_p_value_w_age_re_stanford, rpl_count_ucsf, control_count_ucsf, rpl_count_stanford, control_count_stanford) %>%
+  mutate(Theme = "Childbirth & pregnancy")
+
+# Format results
+negative_results <- prep_table(both_neg)
+
+negative_results
+
+```
+
+### Pull out discordant associations
+
+```{r}
+
+# Pull out overlap
+flipped <- filter(stats_ucsf, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05) %>%
+  filter(phecode %in% filter(stats_stanford, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05)$phecode) %>%
+  arrange(category) %>%
+  select(phenotype) %>%
+  left_join(select(stats_ucsf, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_ucsf = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_ucsf = adj_p_value_w_age_re,
+                rpl_count_ucsf = rpl_count,
+                control_count_ucsf = control_count) %>%
+  left_join(select(stats_stanford, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(odds_ratio_w_age_re_stanford = odds_ratio_w_age_re,
+                adj_p_value_w_age_re_stanford = adj_p_value_w_age_re,
+                rpl_count_stanford = rpl_count,
+                control_count_stanford = control_count) %>%
+  select(phenotype, odds_ratio_w_age_re_ucsf, adj_p_value_w_age_re_ucsf, odds_ratio_w_age_re_stanford, adj_p_value_w_age_re_stanford, rpl_count_ucsf, control_count_ucsf, rpl_count_stanford, control_count_stanford) %>%
+  mutate(Theme = "Discordant")
+
+# Format results
+discordant_results <- prep_table(flipped)
+
+discordant_results
+
+```
+
+### Write to excel files
+
+```{r}
+
+sheets <- list(
+  "Positive" = positive_results,
+  "Negative" = negative_results,
+  "Discordant" = discordant_results)
+
+write_xlsx(sheets, "figures/tables/sig_results.xlsx")
+
+```
+
+

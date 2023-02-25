@@ -1,0 +1,115 @@
+---
+title: "12_make_supp_files.Rmd"
+output: html_document
+date: '2023-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(writexl)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/cohort_selection/all_criteria.rda")
+load("data/gender/TNG_concept_filtered.rda")
+
+load("data/stanford/stats_all.rda")
+stats_stanford <- stats_rpl_control
+stats_u35_stanford <- stats_rpl_control_u35
+stats_o35_stanford <- stats_rpl_control_o35
+load("data/stanford/stats_all_hu.rda")
+stats_hu_stanford <- stats_hu
+
+load("data/associations/stats_all.rda")
+stats_ucsf <- stats_rpl_control
+stats_u35_ucsf <- stats_rpl_control_u35
+stats_o35_ucsf <- stats_rpl_control_o35
+load("data/associations/stats_all_hu.rda")
+stats_hu_ucsf <- stats_hu
+
+```
+
+### Supplementary file 1: concept lists
+
+```{r}
+
+sheets <- list(
+  "Recurrent pregnancy loss" = RPL_concept_filtered,
+  "Pregnancy loss" = PL_SG_concept_filtered,
+  "History of pregnancy loss" = HO_PL_concept_filtered,
+  "Live-birth" = FTB_concept_filtered,
+  "Preterm birth labor rupture" = PTB_concept_filtered,
+  "Multiple gestation with loss" = PL_MG_concept_filtered,
+  "Extrauterine or molar " = EP_concept_filtered,
+  "Gender (trans, NB, or GD)" = TNG_concept_filtered)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_1.xlsx")
+
+```
+
+### Function for de-identifying results with diagnosis counts <10
+
+```{r}
+
+deid_results <- function(results_raw) {
+  deid_results <- results_raw %>%
+    mutate(count_under10 = ifelse(rpl_count < 10 | control_count < 10, TRUE, FALSE))
+  for (r in 1:nrow(deid_results)) {
+    if (deid_results$count_under10[r] == TRUE) {
+      deid_results[r,4:(ncol(deid_results)-1)] <- NA
+    }
+  }
+  deid_results$count_under10 <- factor(deid_results$count_under10, levels = c(FALSE,TRUE))
+  deid_results <- arrange(deid_results, count_under10, phenotype)
+  return (deid_results)
+}
+
+```
+
+### Supplementary file 2: UCSF results
+
+```{r}
+
+stats_ucsf_deid <- deid_results(stats_ucsf)
+stats_u35_ucsf_deid <- deid_results(stats_u35_ucsf)
+stats_o35_ucsf_deid <- deid_results(stats_o35_ucsf)
+stats_hu_ucsf_deid <- deid_results(stats_hu_ucsf)
+
+sheets <- list(
+  "UCSF main results" = stats_ucsf_deid,
+  "UCSF <35 results" = stats_u35_ucsf_deid,
+  "UCSF 35+ results" = stats_o35_ucsf_deid,
+  "UCSF utilization results" = stats_hu_ucsf_deid)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_2.xlsx")
+
+```
+
+### Supplementary file 3: Stanford results
+
+```{r}
+
+stats_stanford_deid <- deid_results(stats_stanford)
+stats_u35_stanford_deid <- deid_results(stats_u35_stanford)
+stats_o35_stanford_deid <- deid_results(stats_o35_stanford)
+stats_hu_stanford_deid <- deid_results(stats_hu_stanford)
+
+sheets <- list(
+  "Stanford main results" = stats_stanford_deid,
+  "Stanford <35 results" = stats_u35_stanford_deid,
+  "Stanford 35+ results" = stats_o35_stanford_deid,
+  "Stanford utilization results" = stats_hu_stanford_deid)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_3.xlsx")
+
+```
+
+
+

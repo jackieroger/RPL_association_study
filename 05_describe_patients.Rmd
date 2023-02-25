@@ -1,0 +1,153 @@
+---
+title: "05_describe_patients.Rmd"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(table1)
+library(ggpubr)
+library(mgcViz)
+library(ggrepel)
+library(writexl)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/cohorts/RPL.rda")
+load("data/cohorts/C.rda")
+load("data/gender/TNG_concept_filtered.rda")
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+RPL_observation <- read_tsv("data/from_rae/health_histories/RPL_observation.txt")
+RPL_procedure_occurrence <- read_tsv("data/from_rae/health_histories/RPL_procedure_occurrence.txt")
+RPL_visit_occurrence <- read_tsv("data/from_rae/health_histories/RPL_visit_occurrence.txt")
+FTB_condition_occurrence <- read_tsv("data/from_rae/health_histories/FTB_condition_occurrence.txt")
+FTB_observation <- read_tsv("data/from_rae/health_histories/FTB_observation.txt")
+FTB_procedure_occurrence <- read_tsv("data/from_rae/health_histories/FTB_procedure_occurrence.txt")
+FTB_visit_occurrence <- read_tsv("data/from_rae/health_histories/FTB_visit_occurrence.txt")
+load("data/phecodes/mappings/co.rda")
+
+```
+
+### Make a function for finding occurrences of something
+
+```{r}
+
+find_occurrences <- function(something_concepts, co, po, o) {
+  # Find each occurrence
+  something_occurrences_co <- co %>%
+    subset(condition_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "condition_start_date",
+           "concept_id" = "condition_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_po <- po %>%
+    subset(procedure_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "procedure_date",
+           "concept_id" = "procedure_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_o <- o %>%
+    subset(observation_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "observation_date",
+           "concept_id" = "observation_concept_id") %>%
+    select(person_id, concept_id, date)
+  # Combine occurrences
+  something_occurrences <- rbind(something_occurrences_co, something_occurrences_po, something_occurrences_o) %>%
+  distinct() %>%
+    mutate(date = as.Date(date))
+  return (something_occurrences)
+}
+
+```
+
+### Identify patients with any record of concepts indicating transgender, non-binary, or gender-diverse
+The full list of transgender, non-binary, or gender-diverse concepts is included in Supplementary File 1.
+
+```{r}
+
+TNG_occurrences <- find_occurrences(TNG_concept_filtered, rbind(RPL_condition_occurrence, FTB_condition_occurrence), rbind(RPL_procedure_occurrence, FTB_procedure_occurrence), rbind(RPL_observation, FTB_observation))
+
+TNG_person_ids <- distinct(TNG_occurrences, person_id)
+
+save(TNG_person_ids, file = "data/gender/TNG_person_ids.rda")
+
+```
+
+### Pull everyone together
+
+```{r}
+
+# Update gender and format columns
+all_patients_rpl_control <- mutate(RPL, cohort = "RPL") %>%
+  rbind(mutate(C, cohort = "Control")) %>%
+  mutate(gender = ifelse(person_id %in% TNG_person_ids$person_id, "Transgender, non-binary, or gender diverse", "Cisgender woman")) %>%
+  mutate(RPL = ifelse(cohort == "RPL", 1 , 0)) %>%
+  mutate(Age = age_t0, Gender = gender, Race = race, Ethnicity = ethnicity, Group = cohort, `Number of visits (total)` = num_visits, `Years in EHR (total)` = years_in_ehr)
+all_patients_rpl_control$Group <- factor(all_patients_rpl_control$Group, levels = c("RPL", "Control"))
+
+```
+
+### Compute some additional healthcare utilization stats
+
+```{r}
+
+# Combine co
+co_rpl_control <- rbind(co_rpl, co_control) %>%
+  select(person_id, phecode, phenotype) %>%
+  distinct()
+
+# Assign binary yes/no if each patient has each diagnosis
+phenotypes_binary_rpl_control <- data.frame(unclass(table(co_rpl_control$person_id, co_rpl_control$phenotype)))
+phenotypes_binary_rpl_control[phenotypes_binary_rpl_control > 0] <- 1 
+phenotypes_binary_rpl_control <- phenotypes_binary_rpl_control %>%
+  tibble::rownames_to_column("person_id")
+phenotypes_binary_rpl_control$person_id <- as.numeric(phenotypes_binary_rpl_control$person_id)
+
+# Compute number of yes's per patient
+num_diagnoses <- phenotypes_binary_rpl_control %>%
+  mutate(num_diagnoses_study = rowSums(.[-1])) %>%
+  select(person_id, num_diagnoses_study) %>%
+  full_join(select(all_patients_rpl_control, person_id)) %>%
+  mutate(num_diagnoses_study = ifelse(is.na(num_diagnoses_study), 0, num_diagnoses_study)) %>%
+  mutate(`Number of diagnoses (in study)` = num_diagnoses_study)
+
+# Compute the number of visits and EHR length for the study window
+vo_stats <- rbind(RPL_visit_occurrence, FTB_visit_occurrence) %>%
+  select(person_id, visit_start_date) %>%
+  distinct() %>%
+  inner_join(select(all_patients_rpl_control, person_id, first_visit, t0)) %>%
+  group_by(person_id) %>%
+  filter(visit_start_date < (t0 + 365)) %>%
+  dplyr::summarise(first_visit = first_visit,
+                   t0 = t0,
+                   years_in_ehr_study = as.numeric((t0 + 365) - first_visit) / 365,
+                   num_visits_study = n()) %>%
+  ungroup() %>%
+  distinct() %>%
+  full_join(select(all_patients_rpl_control, person_id, t0)) %>%
+  mutate(years_in_ehr_study = ifelse(is.na(years_in_ehr_study), 0, years_in_ehr_study),
+         num_visits_study = ifelse(is.na(num_visits_study), 0, num_visits_study))
+
+# Add healthcare utilization to patient dataframe
+all_patients_rpl_control <- all_patients_rpl_control %>%
+  left_join(num_diagnoses) %>%
+  left_join(select(vo_stats, person_id, years_in_ehr_study, num_visits_study)) %>%
+  mutate(`Years in EHR (in study)` = years_in_ehr_study,
+         `Number of visits (in study)` = num_visits_study)
+
+# Save all patients
+save(all_patients_rpl_control, file = "data/cohorts/all_patients_rpl_control.rda")
+
+```
+
+
+
+
