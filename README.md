@@ -1,6 +1,6 @@
 # RPL_association_study
 
-This repository contains the code associated with our paper: Risk factors for recurrent pregnancy loss from electronic health record data in two medical centers: a case-control study.
+This repository contains the code associated with our paper entitled Leveraging electronic health records to identify risk factors for recurrent pregnancy loss across two medical centers: a case-control study
 
 Our study leveraged electronic health record (EHR) data that was standardized to the Observational Medical Outcomes Partnership (OMOP) common data model. To replicate this study using another OMOP EHR database, follow the query instructions below and then use the code in Rmds 01-13 to filter your patients, aggregate diagnoses, implement analyses, analyze results, and make figures.
 
