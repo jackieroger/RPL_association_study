@@ -1,0 +1,137 @@
+---
+title: "22_evaluate_number_PLs.Rmd"
+output: html_document
+date: '2023-06-24'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+
+```
+
+### Load data
+
+```{r}
+
+RPL_person <- read_tsv("data/from_rae/health_histories/RPL_person.txt")
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+RPL_observation <- read_tsv("data/from_rae/health_histories/RPL_observation.txt")
+RPL_procedure_occurrence <- read_tsv("data/from_rae/health_histories/RPL_procedure_occurrence.txt")
+concept <- read_tsv("data/from_rae/criteria_concepts/concept.txt", col_types = cols(.default = col_character()))
+load("data/cohort_selection/all_criteria.rda")
+load("data/cohorts/RPL.rda")
+
+```
+
+### Function for finding occurrences of something
+
+```{r}
+
+find_occurrences <- function(something_concepts, co, po, o) {
+  # Find each occurrence
+  something_occurrences_co <- co %>%
+    subset(condition_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "condition_start_date",
+           "concept_id" = "condition_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_po <- po %>%
+    subset(procedure_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "procedure_date",
+           "concept_id" = "procedure_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_o <- o %>%
+    subset(observation_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "observation_date",
+           "concept_id" = "observation_concept_id") %>%
+    select(person_id, concept_id, date)
+  # Combine occurrences
+  something_occurrences <- rbind(something_occurrences_co, something_occurrences_po, something_occurrences_o) %>%
+  distinct() %>%
+    mutate(date = as.Date(date))
+  return (something_occurrences)
+}
+
+```
+
+### Map out PLs
+
+```{r, warning = FALSE}
+
+# Find PL occurrences
+PL_occurrences <- find_occurrences(PL_SG_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation)
+
+# Filter for PLs occurring up to patients' t0
+PL_occurrences <- inner_join(PL_occurrences, select(RPL, person_id, t0))
+
+# Map out PLs
+# They must be at least 90 days apart
+PLs_mapped_raw <- PL_occurrences %>%
+    group_by(person_id) %>%
+    arrange(date) %>%
+    # Locate first PL
+    mutate(pl1 = case_when(date == min(date) ~ TRUE),
+           # Date of first PL
+           pl1_date = min(date),
+           # 90 days after first PL
+           pl1_90 = pl1_date + 90,
+           # Number of days AFTER 90 days after first PL
+           pl1_90_days = case_when(date - pl1_90 >= 0 ~ date - pl1_90),
+           # Find the PL that occurs soonest after 90 days after first PL
+           pl2 = case_when(pl1_90_days == min(pl1_90_days, na.rm = TRUE) ~ TRUE),
+           # Find the date of PL2
+           pl2_date = case_when(pl2 == TRUE ~ date),
+           # Fill in the PL2 date for the remaining rows (the min function is arbitrary here)
+           pl2_date = min(pl2_date, na.rm = TRUE),
+           # 90 days after second PL
+           pl2_90 = pl2_date + 90,
+           # Number of days AFTER 90 days after second PL
+           pl2_90_days = case_when(date - pl2_90 >= 0 ~ date - pl2_90),
+           # Find the PL that occurs soonest after 90 days after second PL
+           pl3 = case_when(pl2_90_days == min(pl2_90_days, na.rm = TRUE) ~ TRUE),
+           # Find the date of PL3
+           pl3_date = case_when(pl3 == TRUE ~ date),
+           # Fill in the PL3 date for the remaining rows (the min function is arbitrary here)
+           pl3_date = min(pl3_date, na.rm = TRUE),
+           # 90 days after third PL
+           pl3_90 = pl3_date + 90,
+           # Number of days AFTER 90 days after third PL
+           pl3_90_days = case_when(date - pl3_90 >= 0 ~ date - pl3_90),
+           # Find the PL that occurs soonest after 90 days after third PL
+           pl4 = case_when(pl3_90_days == min(pl3_90_days, na.rm = TRUE) ~ TRUE),
+           # Find the date of PL4
+           pl4_date = case_when(pl4 == TRUE ~ date),
+           # Fill in the PL4 date for the remaining rows (the min function is arbitrary here)
+           pl4_date = min(pl4_date, na.rm = TRUE)) %>%
+  ungroup()
+
+# Count PLs
+PLs_mapped <- PLs_mapped_raw %>%
+  select(-c(pl1_90, pl1_90_days, pl2_90, pl2_90_days, pl3_90, pl3_90_days)) %>%
+  mutate(num_pls = case_when(
+    !is.infinite(pl4_date) ~ 4,
+    !is.infinite(pl3_date) ~ 3,
+    !is.infinite(pl2_date) ~ 2,
+    !is.infinite(pl1_date) ~ 1
+  )) %>%
+  group_by(person_id) %>%
+  mutate(num_pls = max(num_pls)) %>%
+  ungroup()
+
+# Compute number of PLs for all RPL patients
+RPL_num_PLs <- distinct(PLs_mapped, person_id, num_pls, pl3_date) %>%
+  rbind(filter(RPL, !person_id %in% PLs_mapped$person_id) %>% select(person_id) %>% mutate(num_pls = 0, pl3_date = NA))
+table(RPL_num_PLs$num_pls)
+#    0    1    2    3    4 
+#  1620  745 1154  225   96
+
+# Save
+save(RPL_num_PLs, file = "data/cohorts/RPL_num_PLs.rda")
+
+```
+
+
+

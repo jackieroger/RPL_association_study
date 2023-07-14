@@ -1,0 +1,177 @@
+---
+title: "21_compare_age_stratified_coeffs.Rmd"
+output: html_document
+date: '2023-06-19'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(mgcv)
+library(writexl)
+
+```
+
+### Functions for running association analysis
+
+```{r, warning = FALSE}
+
+# Function that computes coefficients and standard errors for each phecode
+compute_coeff_se <- function(curr_phecode, hf, all_patients) {
+  # Make a dataframe with outcome, age, and phecode status
+  model_in <- select(all_patients, person_id, outcome, age, race, ethnicity) %>%
+    # Outcome is either rpl (rpl vs control) or birth (birth vs loss)
+    mutate(outcome = ifelse(outcome == "rpl" | outcome == "birth", 1, 0),
+           phecode_status = ifelse(person_id %in% filter(hf, phecode == curr_phecode)$person_id, 1, 0))
+  # Run model with age, race, ethnicity
+  m_w_age_re <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity, family = binomial(), method = "REML", data = model_in)
+  # Get coeffs and ses for phecode status
+  summ <- summary(m_w_age_re)$p.table[2,]
+  curr_phecode_stats <- c(curr_phecode, summ[1], summ[2]) %>%
+    t() %>%
+    as.data.frame()
+  colnames(curr_phecode_stats) <- c("phecode", "coeff", "se")
+  # Return
+  return (curr_phecode_stats)
+}
+
+# Function that gets coefficients and standard errors for all phecodes
+get_coeffs_ses <- function(hf_case, hf_control, all_patients) {
+  # Combine hf
+  hf <- rbind(hf_case, hf_control) %>%
+    distinct()
+  # All phecodes in hf
+  all_phecodes <- select(hf, phecode) %>% distinct()
+  # Compute stats for first phecode
+  coeffs_ses <- compute_coeff_se(all_phecodes$phecode[1], hf, all_patients)
+  # Compute stats for the rest
+  for (p in 2:nrow(all_phecodes)) {
+    curr_phecode <- all_phecodes$phecode[p]
+    p_stats <- compute_coeff_se(curr_phecode, hf, all_patients)
+    coeffs_ses <- rbind(coeffs_ses, p_stats)
+  }
+  return (coeffs_ses)
+}
+
+# Function for doing analysis
+compute_stats <- function(co_case, co_control, case_cohort_size, control_cohort_size, all_patients, outcome) {
+  coeffs_ses <- get_coeffs_ses(co_case, co_control, all_patients)
+  stats <- select(phecode_definitions, phecode, phenotype, category) %>%
+    inner_join(coeffs_ses) %>%
+    arrange(phenotype)
+  return (stats)
+}
+
+```
+
+### Load data and prep dataframes for analysis
+
+```{r, message = FALSE, warning = FALSE}
+
+# Load data
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+load("data/cohorts/RPL.rda")
+load("data/cohorts/C.rda")
+load("data/phecodes/mappings/co.rda")
+
+```
+
+### Pull everyone together and separate <35 and 35+ patients
+
+```{r}
+
+# Combine
+all_patients_rpl_control <- mutate(RPL, outcome = "rpl") %>%
+  rbind(mutate(C, outcome = "control")) %>%
+  dplyr::rename(age = age_t0)
+
+# Get unique occurrences of conditions
+co_rpl <- select(co_rpl, person_id, phecode) %>%
+  distinct()
+co_control <- select(co_control, person_id, phecode) %>%
+  distinct()
+
+# Filter patients
+all_patients_rpl_control_u35 <- all_patients_rpl_control %>%
+  filter(age < 35)
+
+# Filter conditions
+co_rpl_u35 <- filter(co_rpl, person_id %in% all_patients_rpl_control_u35$person_id)
+co_control_u35 <- filter(co_control, person_id %in% all_patients_rpl_control_u35$person_id)
+
+# Filter patients
+all_patients_rpl_control_o35 <- all_patients_rpl_control %>%
+  filter(age >= 35)
+
+# Filter conditions
+co_rpl_o35 <- filter(co_rpl, person_id %in% all_patients_rpl_control_o35$person_id)
+co_control_o35 <- filter(co_control, person_id %in% all_patients_rpl_control_o35$person_id)
+
+```
+
+### Run association analysis
+
+```{r}
+
+# Compute stats
+coeffs_ses_u35 <- compute_stats(
+  co_rpl_u35,
+  co_control_u35,
+  length(unique(filter(RPL, age_t0 < 35)$person_id)),
+  length(unique(filter(C, age_t0 < 35)$person_id)),
+  all_patients_rpl_control_u35,
+  "rpl"
+)
+
+# Compute stats
+coeffs_ses_o35 <- compute_stats(
+  co_rpl_o35,
+  co_control_o35,
+  length(unique(filter(RPL, age_t0 >= 35)$person_id)),
+  length(unique(filter(C, age_t0 >= 35)$person_id)),
+  all_patients_rpl_control_o35,
+  "rpl"
+)
+
+# Save
+save(coeffs_ses_u35, coeffs_ses_o35, file = "data/associations/coeffs_ses_age.rda")
+
+```
+
+### Z test
+
+```{r}
+
+age_coeffs_ztest <- inner_join(coeffs_ses_u35 %>% dplyr::rename(u35_coeff = coeff, u35_se = se),
+                               coeffs_ses_o35 %>% dplyr::rename(o35_coeff = coeff, o35_se = se)) %>%
+  mutate(z_score = (u35_coeff - o35_coeff) / sqrt((u35_se^2) + (o35_se^2)),
+         z_pval = 2 * pnorm(q = z_score, lower.tail = FALSE),
+         z_pval_bh = p.adjust(z_pval, method = "BH"))
+
+```
+
+### Save results
+
+```{r}
+
+save(age_coeffs_ztest, file = "data/associations/age_coeffs_ztest.rda")
+
+```
+
+### Write excel file
+
+```{r}
+
+sheets <- list("z test results" = age_coeffs_ztest %>%
+    select(phenotype, category, z_score, z_pval, z_pval_bh) %>%
+    filter(z_pval_bh < 0.05) %>%
+    arrange(category))
+
+write_xlsx(sheets, "data/associations/age_coeffs_ztest_sig.xlsx")
+
+```

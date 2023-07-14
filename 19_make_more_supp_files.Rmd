@@ -1,0 +1,153 @@
+---
+title: "25_make_more_supp_files.Rmd"
+output: html_document
+date: '2023-07-08'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readxl)
+library(dplyr)
+library(writexl)
+
+```
+
+### First, determine which results have diagnosis counts < 10 using the previously reported results
+
+```{r}
+
+ucsf_main <- read_excel("submission/files/Supplementary_file_2.xlsx", sheet = 1)
+ucsf_u35 <- read_excel("submission/files/Supplementary_file_2.xlsx", sheet = 2)
+ucsf_o35 <- read_excel("submission/files/Supplementary_file_2.xlsx", sheet = 3)
+ucsf_hu <- read_excel("submission/files/Supplementary_file_2.xlsx", sheet = 4)
+
+stanford_main <- read_excel("submission/files/Supplementary_file_3.xlsx", sheet = 1)
+stanford_u35 <- read_excel("submission/files/Supplementary_file_3.xlsx", sheet = 2)
+stanford_o35 <- read_excel("submission/files/Supplementary_file_3.xlsx", sheet = 3)
+stanford_hu <- read_excel("submission/files/Supplementary_file_3.xlsx", sheet = 4)
+
+```
+
+### Confidence intervals
+
+```{r}
+
+deid_ci_results <- function(ci_id) {
+  ci_deid <- ci_id %>%
+    mutate(ci_lower = ifelse(count_under10, NA, ci_lower),
+           ci_upper = ifelse(count_under10, NA, ci_upper)) %>%
+    arrange(count_under10, phenotype) %>%
+    select(phecode, phenotype, category, ci_lower, ci_upper, count_under10)
+}
+
+load("data/associations/cis.rda")
+load("data/associations/cis_age.rda")
+load("data/associations/cis_hu.rda")
+ucsf_cis <- deid_ci_results(left_join(cis, ucsf_main))
+ucsf_cis_u35 <- deid_ci_results(left_join(cis_u35, ucsf_u35))
+ucsf_cis_o35 <- deid_ci_results(left_join(cis_o35, ucsf_o35))
+ucsf_cis_hu <- deid_ci_results(left_join(cis_hu, ucsf_hu))
+
+sheets <- list(
+  "UCSF main CIs" = ucsf_cis,
+  "UCSF <35 CIs" = ucsf_cis_u35,
+  "UCSF 35+ CIs" = ucsf_cis_o35,
+  "UCSF utilization CIs" = ucsf_cis_hu)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_4.xlsx")
+
+load("data/stanford/cis.rda")
+load("data/stanford/cis_age.rda")
+load("data/stanford/cis_hu.rda")
+stanford_cis <- deid_ci_results(left_join(cis, stanford_main))
+stanford_cis_u35 <- deid_ci_results(left_join(cis_u35, stanford_u35))
+stanford_cis_o35 <- deid_ci_results(left_join(cis_o35, stanford_o35))
+stanford_cis_hu <- deid_ci_results(left_join(cis_hu, stanford_hu))
+
+sheets <- list(
+  "Stanford main CIs" = stanford_cis,
+  "Stanford <35 CIs" = stanford_cis_u35,
+  "Stanford 35+ CIs" = stanford_cis_o35,
+  "Stanford utilization CIs" = stanford_cis_hu)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_5.xlsx")
+
+```
+
+### Z test
+
+```{r}
+
+load("data/associations/age_coeffs_ztest.rda")
+ucsf_ztest <- age_coeffs_ztest %>%
+  select(phecode, phenotype, category, z_score, z_pval, z_pval_bh) %>%
+  arrange(z_pval_bh)
+
+write_xlsx(list("UCSF age ztest" = ucsf_ztest), "submission/files/Supplementary_file_6.xlsx")
+
+load("data/stanford/age_coeffs_ztest.rda")
+stanford_ztest <- age_coeffs_ztest %>%
+    select(phecode, phenotype, category, z_score, z_pval, z_pval_bh) %>%
+  arrange(z_pval_bh)
+
+write_xlsx(list("Stanford age ztest" = stanford_ztest), "submission/files/Supplementary_file_7.xlsx")
+
+```
+
+### Function for de-identifying results with diagnosis counts <10
+
+```{r}
+
+deid_results <- function(results_raw) {
+  deid_results <- results_raw %>%
+    mutate(count_under10 = ifelse(rpl_count < 10 | control_count < 10, TRUE, FALSE))
+  for (r in 1:nrow(deid_results)) {
+    if (deid_results$count_under10[r] == TRUE) {
+      deid_results[r,4:(ncol(deid_results)-1)] <- NA
+    }
+  }
+  deid_results$count_under10 <- factor(deid_results$count_under10, levels = c(FALSE,TRUE))
+  deid_results <- arrange(deid_results, count_under10, phenotype)
+  return (deid_results)
+}
+
+```
+
+### 10 year analysis
+
+```{r}
+
+load("data/associations/stats_10.rda")
+ucsf_10 <- stats_10 %>%
+  deid_results()
+
+write_xlsx(list("UCSF 10 year results" = ucsf_10), "submission/files/Supplementary_file_8.xlsx")
+
+load("data/stanford/stats_10.rda")
+stanford_10 <- stats_10 %>%
+  deid_results()
+
+write_xlsx(list("Stanford 10 year results" = stanford_10), "submission/files/Supplementary_file_9.xlsx")
+
+```
+
+### 3PL subgroup analysis
+
+```{r}
+
+load("data/associations/stats_3pl.rda")
+ucsf_3pl <- stats_3pl %>%
+  deid_results()
+
+write_xlsx(list("UCSF 3+ PLs results" = ucsf_3pl), "submission/files/Supplementary_file_10.xlsx")
+
+load("data/stanford/stats_3pl.rda")
+stanford_3pl <- stats_3pl %>%
+  deid_results()
+
+write_xlsx(list("Stanford 3+ PLs results" = stanford_3pl), "submission/files/Supplementary_file_11.xlsx")
+
+```
+

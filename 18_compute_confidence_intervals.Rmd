@@ -1,0 +1,186 @@
+---
+title: "24_compute_confidence_intervals.Rmd"
+output: html_document
+date: '2023-06-25'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(mgcv)
+library(writexl)
+
+```
+
+### Functions for running association analysis
+
+```{r, warning = FALSE}
+
+# Function that computes coefficients and standard errors for each phecode
+compute_coeff_se <- function(curr_phecode, hf, all_patients, hu) {
+  # Make a dataframe with outcome, age, and phecode status
+  model_in <- select(all_patients, person_id, outcome, age, race, ethnicity, num_visits) %>%
+    # Outcome is either rpl (rpl vs control) or birth (birth vs loss)
+    mutate(outcome = ifelse(outcome == "rpl" | outcome == "birth", 1, 0),
+           phecode_status = ifelse(person_id %in% filter(hf, phecode == curr_phecode)$person_id, 1, 0))
+  # Run model
+  if (hu == FALSE) {
+    # Run model with age, race, ethnicity
+  m_w_age_re <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity, family = binomial(), method = "REML", data = model_in)
+  summ <- summary(m_w_age_re)$p.table[2,]
+  } else if (hu == TRUE) {
+    # Run model with age, race, ethnicity, num visits in study
+    m_w_hu <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity + num_visits, family = binomial(), method = "REML", data = model_in)
+    summ <- summary(m_w_hu)$p.table[2,]
+  }
+  # Get coeffs and ses for phecode status
+  curr_phecode_stats <- c(curr_phecode, summ[1], summ[2]) %>%
+    t() %>%
+    as.data.frame()
+  colnames(curr_phecode_stats) <- c("phecode", "coeff", "se")
+  # Return
+  return (curr_phecode_stats)
+}
+
+# Function that gets coefficients and standard errors for all phecodes
+get_coeffs_ses <- function(hf_case, hf_control, all_patients, hu) {
+  # Combine hf
+  hf <- rbind(hf_case, hf_control) %>%
+    distinct()
+  # All phecodes in hf
+  all_phecodes <- select(hf, phecode) %>% distinct()
+  # Compute stats for first phecode
+  coeffs_ses <- compute_coeff_se(all_phecodes$phecode[1], hf, all_patients, hu)
+  # Compute stats for the rest
+  for (p in 2:nrow(all_phecodes)) {
+    curr_phecode <- all_phecodes$phecode[p]
+    p_stats <- compute_coeff_se(curr_phecode, hf, all_patients, hu)
+    coeffs_ses <- rbind(coeffs_ses, p_stats)
+  }
+  return (coeffs_ses)
+}
+
+# Function for doing analysis
+compute_stats <- function(co_case, co_control, case_cohort_size, control_cohort_size, all_patients, outcome, hu = FALSE) {
+  coeffs_ses <- get_coeffs_ses(co_case, co_control, all_patients, hu)
+  stats <- select(phecode_definitions, phecode, phenotype, category) %>%
+    inner_join(coeffs_ses) %>%
+    arrange(phenotype)
+  return (stats)
+}
+
+```
+
+### Load data and prep dataframes for analysis
+
+```{r, message = FALSE, warning = FALSE}
+
+# Load data
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+load("data/cohorts/RPL.rda")
+load("data/cohorts/C.rda")
+load("data/phecodes/mappings/co.rda")
+
+```
+
+### Pull everyone together
+
+```{r}
+
+# Combine
+all_patients_rpl_control <- mutate(RPL, outcome = "rpl") %>%
+  rbind(mutate(C, outcome = "control")) %>%
+  dplyr::rename(age = age_t0)
+
+# Get unique occurrences of conditions
+co_rpl <- select(co_rpl, person_id, phecode) %>%
+  distinct()
+co_control <- select(co_control, person_id, phecode) %>%
+  distinct()
+
+```
+
+### Run association analysis
+
+```{r}
+
+# Compute stats
+coeffs_ses <- compute_stats(
+  co_rpl,
+  co_control,
+  length(unique(RPL$person_id)),
+  length(unique(C$person_id)),
+  all_patients_rpl_control,
+  "rpl"
+)
+# Save
+save(coeffs_ses, file = "data/associations/coeffs_ses.rda")
+
+```
+
+### Function for computing 95% confidence intervals
+
+```{r}
+
+compute_confidence_intervals <- function(coefficients_standarderrors) {
+  confidence_intervals <- coefficients_standarderrors %>%
+  mutate(ci_lower = exp(coeff - (1.96 * se)),
+         ci_upper = exp(coeff + (1.96 * se)))
+  return (confidence_intervals)
+}
+
+```
+
+### Compute confidence intervals for main analysis
+
+```{r}
+
+cis <- compute_confidence_intervals(coeffs_ses)
+
+save(cis, file = "data/associations/cis.rda")
+
+```
+
+### Compute confidence intervals for age stratified analysis
+
+```{r}
+
+load("data/associations/coeffs_ses_age.rda")
+
+cis_u35 <- compute_confidence_intervals(coeffs_ses_u35)
+cis_o35 <- compute_confidence_intervals(coeffs_ses_o35)
+
+save(cis_u35, cis_o35, file = "data/associations/cis_age.rda")
+
+```
+
+### Compute confidence intervals for healthcare utilization sensitivity analysis
+
+```{r}
+
+# Compute stats
+coeffs_ses_hu <- compute_stats(
+  co_rpl,
+  co_control,
+  length(unique(RPL$person_id)),
+  length(unique(C$person_id)),
+  all_patients_rpl_control,
+  "rpl",
+  hu = TRUE
+)
+
+# Save
+save(coeffs_ses_hu, file = "data/associations/coeffs_ses_hu.rda")
+
+# Confidence intervals
+cis_hu <- compute_confidence_intervals(coeffs_ses_hu)
+save(cis_hu, file = "data/associations/cis_hu.rda")
+
+```
+
+
