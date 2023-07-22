@@ -133,6 +133,19 @@ write_xlsx(list("Stanford 10 year results" = stanford_10), "submission/files/Sup
 
 ```
 
+### Look at which associations were significant at both UCSF and stanford for the 10 year analysis
+
+```{r}
+
+# All results
+sig_results_10_ucsf_stanford <- select(ucsf_10, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count) %>%
+  dplyr::rename(OR_ucsf = odds_ratio_w_age_re, P_ucsf = adj_p_value_w_age_re, rpl_count_ucsf = rpl_count, control_count_ucsf = control_count) %>%
+  inner_join(select(stanford_10, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(OR_stanford = odds_ratio_w_age_re, P_stanford = adj_p_value_w_age_re, rpl_count_stanford = rpl_count, control_count_stanford = control_count) %>%
+  filter(P_ucsf < 0.05 & P_stanford < 0.05)
+
+```
+
 ### 3PL subgroup analysis
 
 ```{r}
@@ -148,6 +161,19 @@ stanford_3pl <- stats_3pl %>%
   deid_results()
 
 write_xlsx(list("Stanford 3+ PLs results" = stanford_3pl), "submission/files/Supplementary_file_11.xlsx")
+
+```
+
+### Look at which associations were significant at both UCSF and stanford for the 3PL subgroup analysis
+
+```{r}
+
+# All results
+sig_results_3pl_ucsf_stanford <- select(ucsf_3pl, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count) %>%
+  dplyr::rename(OR_ucsf = odds_ratio_w_age_re, P_ucsf = adj_p_value_w_age_re, rpl_count_ucsf = rpl_count, control_count_ucsf = control_count) %>%
+  inner_join(select(stanford_3pl, phenotype, odds_ratio_w_age_re, adj_p_value_w_age_re, rpl_count, control_count)) %>%
+  dplyr::rename(OR_stanford = odds_ratio_w_age_re, P_stanford = adj_p_value_w_age_re, rpl_count_stanford = rpl_count, control_count_stanford = control_count) %>%
+  filter(P_ucsf < 0.05 & P_stanford < 0.05)
 
 ```
 
