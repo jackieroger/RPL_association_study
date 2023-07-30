@@ -6,7 +6,7 @@ Leveraging electronic health records to identify risk factors for recurrent preg
 
 Jacquelyn Roger, Feng Xie, Jean Costello, Alice Tang, Jay Liu, Tomiko Oskotsky, Sarah Woldemariam, Idit Kosti, Brian Le, Michael P. Snyder, Dara Torgerson, Gary M. Shaw, David K. Stevenson, Aleksandar Rajkovic, M. Maria Glymour, Nima Aghaeepour, Hakan Cakmak, Ruth B. Lathi, Marina Sirota
 
-Our study utilized electronic health record (EHR) data that was standardized to the Observational Medical Outcomes Partnership (OMOP) common data model. To replicate this study using another OMOP EHR database, follow the query instructions below and then use the code in Rmds 01-13 to filter your patients, aggregate diagnoses, implement analyses, analyze results, and make figures.
+Our study utilized electronic health record (EHR) data that was standardized to the Observational Medical Outcomes Partnership (OMOP) common data model. To replicate this study using another OMOP EHR database, follow the query instructions below and then use the code in these Rmd files to filter your patients, aggregate diagnoses, implement analyses, analyze results, and make figures.
 
 Query instructions:
 1. Query your OMOP database to identify patients that meet the initial inclusion criteria for the RPL group. The initial RPL criteria is: any record of pregnancy loss (as defined in the pregnancy loss, recurrent pregnancy loss, and history of pregnancy loss sections of Supplementary File 1).
