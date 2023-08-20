@@ -2,7 +2,7 @@
 
 This repository contains the code associated with our paper:
 
-Leveraging electronic health records to identify risk factors for recurrent pregnancy loss across two medical centers: a case-control study
+Leveraging electronic health records to identify risk factors for recurrent pregnancy loss across two medical centers
 
 Jacquelyn Roger, Feng Xie, Jean Costello, Alice Tang, Jay Liu, Tomiko Oskotsky, Sarah Woldemariam, Idit Kosti, Brian Le, Michael P. Snyder, Linda C. Giudice, Dara Torgerson, Gary M. Shaw, David K. Stevenson, Aleksandar Rajkovic, M. Maria Glymour, Nima Aghaeepour, Hakan Cakmak, Ruth B. Lathi, Marina Sirota
 
