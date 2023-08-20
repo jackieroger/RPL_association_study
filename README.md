@@ -18,6 +18,24 @@ System requirements: This code was developed and tested using R version 4.0.2 on
 
 Installation guide: To run the code, clone this repository. Cloning typically takes a minute or less.
 
-Demo instructions: We have created a small synthetic EHR dataset to illustrate the expected input dataset format and how to analyze it using our code. To run the code on this data, open the Rmds in RStudio and run each one sequentially (starting with Rmd 01). Some Rmds run quite quickly (a couple minutes) and others can take longer (up to several hours) to complete. These Rmds create all of the outputs (results files, figures, tables) reported in the paper. You can create the same file structure that we did (with separate folders for data, figures, etc) or modify the code to impose a different file structure.
+Demo instructions: We have created a small synthetic EHR dataset (see folder synthetic_data/) to illustrate the expected input dataset format and how to analyze it using our code. To run the code on this data, open the Rmds in RStudio and run each one sequentially (starting with Rmd 01). Some Rmds run quite quickly (a couple minutes) and others can take longer (up to several hours) to complete. These Rmds create all of the outputs (results files, figures, tables) reported in the paper. You can create the same file structure that we did (with separate folders for data, figures, etc) or modify the code to impose a different file structure.
 
 The data used for our project (UCSF and Stanford EHR) is not publically available. If you would like to set up an official collaboration, email marina.sirota@ucsf.edu. Requests should be processed within a couple of weeks.
+
+License:
+
+Our RPL association study code analyzes EHR data from RPL and control patients, and identifies diagnoses associated with RPL.
+    Copyright (C) 2023 Jacquelyn Roger
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
