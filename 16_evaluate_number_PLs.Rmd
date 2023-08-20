@@ -13,6 +13,9 @@ library(dplyr)
 
 ```
 
+Copyright (C) 2023 Jacquelyn Roger
+License described at: https://github.com/jackieroger/RPL_association_study
+
 ### Load data
 
 ```{r}
