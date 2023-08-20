@@ -17,6 +17,9 @@ library(writexl)
 
 ```
 
+Copyright (C) 2023 Jacquelyn Roger
+License described at: https://github.com/jackieroger/RPL_association_study
+
 ### Functions for running association analysis
 
 ```{r, warning = FALSE}
