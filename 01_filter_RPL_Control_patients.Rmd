@@ -14,6 +14,9 @@ library(eeptools)
 
 ```
 
+Copyright (C) 2023 Jacquelyn Roger
+License described at: https://github.com/jackieroger/RPL_association_study
+
 First, we queried the UCSF OMOP EHR database to identify patients that met the initial inclusion criteria for the RPL and Control groups. The RPL initial inclusion criteria was any record of pregnancy loss (as defined in the pregnancy loss, recurrent pregnancy loss, and history of pregnancy loss sections of Supplementary File 1). The Control initial inclusion criteria was any record of live-birth (as defined in the live-birth section of Supplementary File 1). Then, we queried the included RPL and Control patients' demographics, conditions, observations, procedures, and visits.
 
 This Rmd takes the results of the above described queries as inputs. For example, RPL_person contains a subset of the OMOP person table for individuals that met the initial inclusion criteria for the RPL group. FTB_person (FTB = full-term birth) contains a subset of the OMOP person table for individuals that met the initial inclusion criteria for the Control group. The rest of the tables (conditions, observations, procedures, visits) are similar subsets for the RPL and Control patients, respectively.
