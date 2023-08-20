@@ -14,6 +14,9 @@ library(writexl)
 
 ```
 
+Copyright (C) 2023 Jacquelyn Roger
+License described at: https://github.com/jackieroger/RPL_association_study
+
 ### First, determine which results have diagnosis counts < 10 using the previously reported results
 
 ```{r}
