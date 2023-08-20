@@ -24,7 +24,7 @@ The data used for our project (UCSF and Stanford EHR) is not publically availabl
 
 License:
 
-Our RPL association study code analyzes EHR data from RPL and control patients, and identifies diagnoses associated with RPL.
+    Our RPL association study code analyzes EHR data from RPL and control patients, and identifies diagnoses associated with RPL.
     Copyright (C) 2023 Jacquelyn Roger
 
     This program is free software: you can redistribute it and/or modify
