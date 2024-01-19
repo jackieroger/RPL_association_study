@@ -67,7 +67,7 @@ find_occurrences <- function(something_concepts, co, po, o) {
 # Find PL occurrences
 PL_occurrences <- find_occurrences(PL_SG_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation)
 
-# Filter for PLs occurring up to patients' t0
+# Combine with t0 info
 PL_occurrences <- inner_join(PL_occurrences, select(RPL, person_id, t0))
 
 # Map out PLs
