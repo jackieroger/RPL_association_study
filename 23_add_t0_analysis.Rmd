@@ -242,3 +242,19 @@ write_xlsx(sheets, "submission/files/Supplementary_file_13.xlsx")
 
 ```
 
+### How many were significantly positively associated with loss and what's the overlap with the main analysis?
+
+```{r}
+
+load("data/associations/stats_all.rda")
+
+sig_pos_t0 <- filter(stats_t0, adj_p_value_w_age_re < 0.05 & odds_ratio_w_age_re > 1)
+sig_pos_main <- filter(stats_rpl_control, adj_p_value_w_age_re < 0.05 & odds_ratio_w_age_re > 1)
+
+nrow(sig_pos_t0)
+# 55
+
+length(intersect(sig_pos_t0$phenotype, sig_pos_main$phenotype))
+# 29
+
+```
