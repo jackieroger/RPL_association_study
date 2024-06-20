@@ -18,7 +18,7 @@ System requirements: This code was developed and tested using R version 4.0.2 on
 
 Installation guide: To run the code, clone this repository. Cloning typically takes a minute or less.
 
-The data used for our project (UCSF and Stanford EHR) is not publically available. If you would like to set up an official collaboration, email marina.sirota@ucsf.edu. Requests should be processed within a couple of weeks.
+The data used for our project (UCSF and Stanford EHR) is not publically available. UCSF-affiliated individuals can request access to UCSF EHR data by contacting UCSF Information Commons (Info.Commons@ucsf.edu). Stanford’s EHR data is managed through the Stanford Research Repository (https://med.stanford.edu/starr-tools.html). Individuals not affiliated with UCSF may request to set up an official collaboration with a UCSF-affiliated investigator by contacting the principal investigator, Marina Sirota (marina.sirota@ucsf.edu). Requests should be processed within a couple of weeks.
 
 License:
 
