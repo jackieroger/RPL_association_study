@@ -1,0 +1,311 @@
+---
+title: "29_add_outcomes_analysis.Rmd"
+output: html_document
+date: '2024-01-26'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(mgcv)
+library(writexl)
+library(tidyr)
+library(table1)
+
+```
+
+### Functions for running association analysis
+
+```{r, warning = FALSE}
+
+# Function for computing concept counts for each cohort
+compute_counts <- function(hf_cohort) {
+  hf_cohort_df_name <- deparse(substitute(hf_cohort))
+  cohort <- str_split(hf_cohort_df_name, "_")[[1]][2]
+  cc <- select(hf_cohort, phecode, person_id) %>%
+    distinct() %>%
+    group_by(phecode) %>%
+    dplyr::summarise(count = n())
+  colnames(cc)[2] <- paste0(cohort, "_count")
+  return (cc)
+}
+
+# Function for getting the concept counts for each cohort and combining by study
+# for a given type of health factor
+get_study_counts <- function(hf_case, hf_control, case_cohort_size, control_cohort_size) {
+  # Get concept counts for each cohort
+  cc_case <- compute_counts(hf_case)
+  cc_control <- compute_counts(hf_control)
+  # Combine by study
+  counts_case_control <- join_all(list(cc_case, cc_control), by = "phecode", type = "full") %>%
+    arrange(phecode)
+  counts_case_control[is.na(counts_case_control)] <- 0
+  counts_case_control <- counts_case_control
+  # Compute proportions
+  counts_case_control <- counts_case_control %>%
+    mutate(prop_case = case_count / case_cohort_size,
+           prop_control = control_count / control_cohort_size)
+  # Remove phenotypes where neither the case nor the control has >=5 people with it
+  # counts_case_control <- filter(counts_case_control, case_count >= 5 | control_count >= 5)
+  # Return counts
+  return (counts_case_control)
+}
+
+# Function that computes odds ratio for each phecode
+compute_ors_pvals <- function(curr_phecode, hf, all_patients) {
+  # Make a dataframe with outcome, age, and phecode status
+  model_in <- select(all_patients, person_id, outcome, age, race, ethnicity) %>%
+    # Outcome is loss
+    mutate(outcome = ifelse(outcome == "loss", 1, 0),
+           phecode_status = ifelse(person_id %in% filter(hf, phecode == curr_phecode)$person_id, 1, 0))
+  # Run crude model
+  m_crude <- glm(outcome ~ phecode_status, family = binomial(), data = model_in)
+  # Run model with age, race, ethnicity
+  m_w_age_re <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity, family = binomial(), method = "REML", data = model_in)
+  # Get ORs and pvals
+  curr_phecode_stats <- c(curr_phecode, exp(coef(m_crude))[2], coef(summary(m_crude))[,4][2], exp(coef(m_w_age_re))[2], summary(m_w_age_re)$p.table[2,4]) %>%
+    t() %>%
+    as.data.frame()
+  colnames(curr_phecode_stats) <- c("phecode", "odds_ratio_crude", "p_value_crude", "odds_ratio_w_age_re", "p_value_w_age_re")
+  # Return
+  return (curr_phecode_stats)
+}
+
+# Function that gets odds ratios and pvals for all phecodes
+get_ors_pvals <- function(counts, hf_case, hf_control, all_patients) {
+  # Combine hf
+  hf <- rbind(hf_case, hf_control) %>%
+    distinct()
+  # Compute stats for first phecode
+  ors_pvals <- compute_ors_pvals(counts$phecode[1], hf, all_patients)
+  # Compute stats for the rest
+  for (p in 2:nrow(counts)) {
+    curr_phecode <- counts$phecode[p]
+    p_stats <- compute_ors_pvals(curr_phecode, hf, all_patients)
+    ors_pvals <- rbind(ors_pvals, p_stats)
+  }
+  # Add a column for adjusted pvalues
+  ors_pvals <- ors_pvals %>%
+    mutate(adj_p_value_crude = p.adjust(p_value_crude, method = "BH"),
+           adj_p_value_w_age_re = p.adjust(p_value_w_age_re, method = "BH")) %>%
+    select(1, 2, 3, 6, 4, 5, 7)
+  return (ors_pvals)
+}
+
+# Function for doing analysis
+compute_stats <- function(co_case, co_control, case_cohort_size, control_cohort_size, all_patients, outcome) {
+  counts_case_control <- get_study_counts(co_case, co_control, case_cohort_size, control_cohort_size)
+  odds_ratios_pvals <- get_ors_pvals(counts_case_control, co_case, co_control, all_patients)
+  stats <- select(phecode_definitions, phecode, phenotype, category) %>%
+    inner_join(counts_case_control) %>%
+    left_join(odds_ratios_pvals) %>%
+    arrange(phenotype)
+  # Customize column names
+  stats <- stats %>%
+      dplyr::rename(loss_count = case_count, birth_count = control_count, loss_prop = prop_case, birth_prop = prop_control)
+  return (stats)
+}
+
+```
+
+### Load data
+
+```{r, message = FALSE, warning = FALSE}
+
+# Load data
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+load("data/outcomes_analysis/next_pregnancy_outcomes.rda")
+load("data/phecodes/mappings/icd_to_phecode_mappings.rda")
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+load("data/cohorts/RPL.rda")
+load("data/paper_figures_data/center_stats.rda")
+
+```
+
+### Find diagnoses that were significant in the main analysis
+
+```{r}
+
+load("data/stanford/stats_all.rda")
+sig_in_stanford <- stats_rpl_control %>%
+  select(phecode, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(stanford_odds_ratio = odds_ratio_w_age_re,
+                stanford_p_value = adj_p_value_w_age_re) %>%
+  filter(stanford_p_value < 0.05)
+
+load("data/associations/stats_all.rda")
+sig_in_ucsf <- stats_rpl_control %>%
+  select(phecode, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+  dplyr::rename(ucsf_odds_ratio = odds_ratio_w_age_re,
+                ucsf_p_value = adj_p_value_w_age_re) %>%
+  filter(ucsf_p_value < 0.05)
+
+sig_in_both <- inner_join(sig_in_ucsf, sig_in_stanford)
+
+```
+
+### Make dataframes of the birth and loss subgroups of the RPL cohort
+
+```{r}
+
+# Assign age at next pregnancy outcome
+next_pregs <- next_pregnancy_outcomes %>%
+  left_join(select(RPL, person_id, birthdate, race, ethnicity)) %>%
+  mutate(age = ifelse(outcome == "birth", as.numeric(livebirth_date - birthdate)/365, as.numeric(loss_date - birthdate)/365))
+
+# Split outcomes
+RPL_birth <- filter(next_pregs, outcome == "birth")
+RPL_loss <- filter(next_pregs, outcome == "loss")
+
+# Save
+save(RPL_birth, RPL_loss, file = "data/outcomes_analysis/RPL_outcomes.rda")
+
+```
+
+### Aggregate conditions for RPL patients that occur before their birth or loss
+Filter to only include diagnoses that were significant from the main analysis
+
+```{r}
+
+# RPL birth
+co_RPL_birth <- left_join(RPL_condition_occurrence, icd_to_phecode_mappings) %>%
+  drop_na() %>%
+  inner_join(RPL_birth) %>%
+  filter(condition_start_date < livebirth_date) %>%
+  filter(phecode %in% sig_in_both$phecode)
+
+# RPL loss
+co_RPL_loss <- left_join(RPL_condition_occurrence, icd_to_phecode_mappings) %>%
+  drop_na() %>%
+  inner_join(RPL_loss) %>%
+  filter(condition_start_date < loss_date) %>%
+  filter(phecode %in% sig_in_both$phecode)
+
+# Save
+save(co_RPL_birth, co_RPL_loss, file = "data/phecodes/mappings/co_RPL_outcomes.rda")
+
+```
+
+### Run birth vs loss analysis
+
+```{r}
+
+# Get unique occurrences of conditions
+co_RPL_birth <- select(co_RPL_birth, person_id, phecode) %>%
+  distinct()
+co_RPL_loss <- select(co_RPL_loss, person_id, phecode) %>%
+  distinct()
+
+# Compute stats
+stats_RPL_outcomes <- compute_stats(
+  co_RPL_loss,
+  co_RPL_birth,
+  length(unique(RPL_loss$person_id)),
+  length(unique(RPL_birth$person_id)),
+  next_pregs,
+  "loss"
+)
+
+```
+
+### Save results
+
+```{r}
+
+save(stats_RPL_outcomes, file = "data/outcomes_analysis/stats_RPL_outcomes.rda")
+
+```
+
+### Write excel file of sig results (adjusted p < 0.05)
+
+```{r}
+
+sheets <- list(
+  "loss neg" = filter(stats_RPL_outcomes, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05) %>%
+    select(phenotype, category, loss_count, birth_count, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category),
+  "loss pos" = filter(stats_RPL_outcomes, odds_ratio_w_age_re > 1 & adj_p_value_w_age_re < 0.05) %>%
+    select(phenotype, category, loss_count, birth_count, odds_ratio_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category))
+
+write_xlsx(sheets, "data/outcomes_analysis/sig_results_outcomes.xlsx")
+
+```
+
+### Write excel file of all results, organized by what the result was in the main analysis
+
+```{r}
+
+results_combined <- stats_RPL_outcomes %>%
+  left_join(sig_in_both)
+
+sheets <- list(
+  "pos + pos" = filter(results_combined, ucsf_odds_ratio > 1 & odds_ratio_w_age_re > 1) %>%
+    select(phenotype, category, ucsf_odds_ratio, loss_count, birth_count, odds_ratio_w_age_re, p_value_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category),
+  "pos + neg" = filter(results_combined, ucsf_odds_ratio > 1 & odds_ratio_w_age_re <= 1) %>%
+    select(phenotype, category, ucsf_odds_ratio, loss_count, birth_count, odds_ratio_w_age_re, p_value_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category),
+  "neg + neg" = filter(results_combined, ucsf_odds_ratio <= 1 & odds_ratio_w_age_re <= 1) %>%
+    select(phenotype, category, ucsf_odds_ratio, loss_count, birth_count, odds_ratio_w_age_re,  p_value_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category),
+  "neg + pos" = filter(results_combined, ucsf_odds_ratio <= 1 & odds_ratio_w_age_re > 1) %>%
+    select(phenotype, category, ucsf_odds_ratio, loss_count, birth_count, odds_ratio_w_age_re,  p_value_w_age_re, adj_p_value_w_age_re) %>%
+    arrange(category))
+
+write_xlsx(sheets, "data/outcomes_analysis/all_results_outcomes.xlsx")
+
+```
+
+### Make a function for computing p-values for table1
+Source 1: https://github.com/benjaminrich/table1/issues/52
+Source 2: https://cran.r-project.org/web/packages/table1/vignettes/table1-examples.html
+
+```{r}
+
+# Function for computing p-values for table1
+# Source 1: https://github.com/benjaminrich/table1/issues/52
+# Source 2: https://cran.r-project.org/web/packages/table1/vignettes/table1-examples.html
+pvalue <- function(x, ...) {
+  x <- x[-length(x)]  # Remove "overall" group
+  # Construct vectors of data y, and groups (strata) g
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a 2-sample t-test
+    p <- t.test(y ~ g)$p.value
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=3, eps=0.001)))
+}
+
+```
+
+### Make demographic tables
+
+```{r}
+
+# Make table
+table1(~ age + race + ethnicity | outcome, data = next_pregs, overall = "Total", extra.col = list(`P-value` = pvalue), extra.col.pos = 4)
+
+```
+
+### Compute spearman correlation of next pregnancy results and main analysis at UCSF
+
+```{r}
+
+cor.test(results_combined$odds_ratio_w_age_re, results_combined$ucsf_odds_ratio, method = "spearman")
+# 0.7851571
+
+```
+
+

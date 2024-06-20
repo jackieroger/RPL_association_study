@@ -1,0 +1,125 @@
+---
+title: "28_find_outcomes.Rmd"
+output: html_document
+date: '2024-01-18'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/cohorts/RPL.rda")
+load("data/outcomes_analysis/postRPL_births.rda")
+RPL_condition_occurrence <- read_tsv("data/from_rae/health_histories/RPL_condition_occurrence.txt")
+RPL_observation <- read_tsv("data/from_rae/health_histories/RPL_observation.txt")
+RPL_procedure_occurrence <- read_tsv("data/from_rae/health_histories/RPL_procedure_occurrence.txt")
+load("data/cohort_selection/all_criteria.rda")
+
+```
+
+### Find pregnancy losses after RPL index date plus 30 day buffer
+
+```{r}
+
+find_occurrences <- function(something_concepts, co, po, o) {
+  # Find each occurrence
+  something_occurrences_co <- co %>%
+    subset(condition_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "condition_start_date",
+           "concept_id" = "condition_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_po <- po %>%
+    subset(procedure_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "procedure_date",
+           "concept_id" = "procedure_concept_id") %>%
+    select(person_id, concept_id, date)
+  something_occurrences_o <- o %>%
+    subset(observation_concept_id %in% something_concepts$concept_id) %>%
+    dplyr::rename("date" = "observation_date",
+           "concept_id" = "observation_concept_id") %>%
+    select(person_id, concept_id, date)
+  # Combine occurrences
+  something_occurrences <- rbind(something_occurrences_co, something_occurrences_po, something_occurrences_o) %>%
+  distinct() %>%
+    mutate(date = as.Date(date))
+  return (something_occurrences)
+}
+
+# Find PL occurrences
+PL_occurrences <- find_occurrences(PL_SG_concept_filtered, RPL_condition_occurrence, RPL_procedure_occurrence, RPL_observation)
+
+# Filter for RPL patients and for post-t0 losses
+PL_occurrences <- inner_join(PL_occurrences, select(RPL, person_id, t0)) %>%
+  filter(date > t0 + 30)
+
+# Create dataframe of post-RPL losses
+postRPL_losses <- select(PL_occurrences, person_id, date) %>%
+  dplyr::rename(loss_date = date)
+
+# Save
+save(postRPL_losses, file = "data/outcomes_analysis/postRPL_losses.rda")
+
+```
+
+### Determine outcome of next pregnancy for each patient
+
+```{r}
+
+next_birth <- postRPL_births %>%
+  group_by(person_id) %>%
+  slice_min(livebirth_date) %>%
+  ungroup() %>%
+  distinct()
+
+next_loss <- postRPL_losses %>%
+  group_by(person_id) %>%
+  slice_min(loss_date) %>%
+  ungroup() %>%
+  distinct()
+
+next_pregnancy_outcomes <- full_join(next_birth, next_loss, by = c("person_id" = "person_id")) %>%
+  mutate(outcome = case_when(
+    is.na(livebirth_date) ~ "loss",
+    is.na(loss_date) ~ "birth",
+    livebirth_date < loss_date ~ "birth",
+    loss_date < livebirth_date ~ "loss",
+    TRUE ~ "both"
+  )) %>%
+  left_join(select(RPL, person_id, t0)) %>%
+  arrange(person_id)
+
+# How many RPL patients have next pregnancy outcomes?
+length(unique(next_pregnancy_outcomes$person_id))
+# 1495
+
+# Filter out patients whose next pregancy outcome is both birth and loss
+next_pregnancy_outcomes <- filter(next_pregnancy_outcomes, outcome != "both")
+
+# How many remain?
+length(unique(next_pregnancy_outcomes$person_id))
+# 1493
+
+# Whats the distribution of outcomes?
+table(next_pregnancy_outcomes$outcome)
+# birth  loss 
+#  759   734
+
+# Save
+save(next_pregnancy_outcomes, file = "data/outcomes_analysis/next_pregnancy_outcomes.rda")
+
+```
+
+
+
+
+
+

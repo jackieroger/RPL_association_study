@@ -1,0 +1,258 @@
+---
+title: "32_add_outcomes_sensitivity_analysis.Rmd"
+output: html_document
+date: '2024-06-17'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(mgcv)
+library(writexl)
+library(tidyr)
+library(table1)
+
+```
+
+### Functions for running association analysis
+
+```{r, warning = FALSE}
+
+# Function for computing concept counts for each cohort
+compute_counts <- function(hf_cohort) {
+  hf_cohort_df_name <- deparse(substitute(hf_cohort))
+  cohort <- str_split(hf_cohort_df_name, "_")[[1]][2]
+  cc <- select(hf_cohort, phecode, person_id) %>%
+    distinct() %>%
+    group_by(phecode) %>%
+    dplyr::summarise(count = n())
+  colnames(cc)[2] <- paste0(cohort, "_count")
+  return (cc)
+}
+
+# Function for getting the concept counts for each cohort and combining by study
+# for a given type of health factor
+get_study_counts <- function(hf_case, hf_control, case_cohort_size, control_cohort_size) {
+  # Get concept counts for each cohort
+  cc_case <- compute_counts(hf_case)
+  cc_control <- compute_counts(hf_control)
+  # Combine by study
+  counts_case_control <- join_all(list(cc_case, cc_control), by = "phecode", type = "full") %>%
+    arrange(phecode)
+  counts_case_control[is.na(counts_case_control)] <- 0
+  counts_case_control <- counts_case_control
+  # Compute proportions
+  counts_case_control <- counts_case_control %>%
+    mutate(prop_case = case_count / case_cohort_size,
+           prop_control = control_count / control_cohort_size)
+  # Remove phenotypes where neither the case nor the control has >=5 people with it
+  # counts_case_control <- filter(counts_case_control, case_count >= 5 | control_count >= 5)
+  # Return counts
+  return (counts_case_control)
+}
+
+# Function that computes odds ratio for each phecode
+compute_ors_pvals <- function(curr_phecode, hf, all_patients) {
+  # Make a dataframe with outcome, age, and phecode status
+  model_in <- select(all_patients, person_id, outcome, age, race, ethnicity, prevbirth) %>%
+    # Outcome is loss
+    mutate(outcome = ifelse(outcome == "loss", 1, 0),
+           phecode_status = ifelse(person_id %in% filter(hf, phecode == curr_phecode)$person_id, 1, 0))
+  # Run crude model
+  m_crude <- glm(outcome ~ phecode_status, family = binomial(), data = model_in)
+  # Run model with age, race, ethnicity
+  m_w_age_re <- mgcv::gam(outcome ~ phecode_status + s(age) + race + ethnicity + prevbirth, family = binomial(), method = "REML", data = model_in)
+  # Get ORs and pvals
+  curr_phecode_stats <- c(curr_phecode, exp(coef(m_crude))[2], coef(summary(m_crude))[,4][2], exp(coef(m_w_age_re))[2], summary(m_w_age_re)$p.table[2,4]) %>%
+    t() %>%
+    as.data.frame()
+  colnames(curr_phecode_stats) <- c("phecode", "odds_ratio_crude", "p_value_crude", "odds_ratio_w_age_re", "p_value_w_age_re")
+  # Return
+  return (curr_phecode_stats)
+}
+
+# Function that gets odds ratios and pvals for all phecodes
+get_ors_pvals <- function(counts, hf_case, hf_control, all_patients) {
+  # Combine hf
+  hf <- rbind(hf_case, hf_control) %>%
+    distinct()
+  # Compute stats for first phecode
+  ors_pvals <- compute_ors_pvals(counts$phecode[1], hf, all_patients)
+  # Compute stats for the rest
+  for (p in 2:nrow(counts)) {
+    curr_phecode <- counts$phecode[p]
+    p_stats <- compute_ors_pvals(curr_phecode, hf, all_patients)
+    ors_pvals <- rbind(ors_pvals, p_stats)
+  }
+  # Add a column for adjusted pvalues
+  ors_pvals <- ors_pvals %>%
+    mutate(adj_p_value_crude = p.adjust(p_value_crude, method = "BH"),
+           adj_p_value_w_age_re = p.adjust(p_value_w_age_re, method = "BH")) %>%
+    select(1, 2, 3, 6, 4, 5, 7)
+  return (ors_pvals)
+}
+
+# Function for doing analysis
+compute_stats <- function(co_case, co_control, case_cohort_size, control_cohort_size, all_patients, outcome) {
+  counts_case_control <- get_study_counts(co_case, co_control, case_cohort_size, control_cohort_size)
+  odds_ratios_pvals <- get_ors_pvals(counts_case_control, co_case, co_control, all_patients)
+  stats <- select(phecode_definitions, phecode, phenotype, category) %>%
+    inner_join(counts_case_control) %>%
+    left_join(odds_ratios_pvals) %>%
+    arrange(phenotype)
+  # Customize column names
+  stats <- stats %>%
+      dplyr::rename(loss_count = case_count, birth_count = control_count, loss_prop = prop_case, birth_prop = prop_control)
+  return (stats)
+}
+
+```
+
+### Load data
+
+```{r, message = FALSE, warning = FALSE}
+
+# Load data
+load("data/outcomes_analysis/all_RPL_births.rda")
+load("data/cohorts/RPL.rda")
+load("data/outcomes_analysis/RPL_outcomes.rda")
+load("data/phecodes/mappings/co_RPL_outcomes.rda")
+phecode_definitions <- read.csv("data/phecodes/definitions/phecode_definitions1.2.csv")
+
+```
+
+### Figure out who had a birth at UCSF before or not
+
+```{r}
+
+preRPL_births <- all_RPL_births %>%
+  left_join(RPL) %>%
+  filter(livebirth_date < t0)
+
+RPL_birth <- mutate(RPL_birth, prevbirth = ifelse(person_id %in% preRPL_births$person_id, 1, 0))
+RPL_loss <- mutate(RPL_loss, prevbirth = ifelse(person_id %in% preRPL_births$person_id, 1, 0))
+
+count(RPL_birth, prevbirth)
+count(RPL_loss, prevbirth)
+
+```
+
+### Run birth vs loss analysis
+
+```{r}
+
+# Get unique occurrences of conditions
+co_RPL_birth <- select(co_RPL_birth, person_id, phecode) %>%
+  distinct()
+co_RPL_loss <- select(co_RPL_loss, person_id, phecode) %>%
+  distinct()
+
+next_pregs <- rbind(RPL_birth, RPL_loss)
+
+# Compute stats
+stats_RPL_outcomes_with_prevbirth <- compute_stats(
+  co_RPL_loss,
+  co_RPL_birth,
+  length(unique(RPL_loss$person_id)),
+  length(unique(RPL_birth$person_id)),
+  next_pregs,
+  "loss"
+)
+
+```
+
+### Save results
+
+```{r}
+
+stats_RPL_outcomes_with_prevbirth <- stats_RPL_outcomes_with_prevbirth %>%
+  select(-c(odds_ratio_crude, p_value_crude, adj_p_value_crude)) %>%
+  dplyr::rename(odds_ratio_w_age_re_prevbirth = odds_ratio_w_age_re,
+                p_value_w_age_re_prevbirth = p_value_w_age_re,
+                adj_p_value_w_age_re_prevbirth = adj_p_value_w_age_re)
+
+save(stats_RPL_outcomes_with_prevbirth, file = "data/outcomes_analysis/stats_RPL_outcomes_with_prevbirth.rda")
+
+```
+
+### Write excel file of sig results (adjusted p < 0.05)
+
+```{r}
+
+sheets <- list(
+  "birth-associated" = filter(stats_RPL_outcomes_with_prevbirth, odds_ratio_w_age_re_prevbirth < 1 & adj_p_value_w_age_re_prevbirth < 0.05) %>%
+    select(phenotype, category, loss_count, birth_count, odds_ratio_w_age_re_prevbirth, adj_p_value_w_age_re_prevbirth) %>%
+    arrange(category),
+  "loss-associated" = filter(stats_RPL_outcomes_with_prevbirth, odds_ratio_w_age_re_prevbirth > 1 & adj_p_value_w_age_re_prevbirth < 0.05) %>%
+    select(phenotype, category, loss_count, birth_count, odds_ratio_w_age_re_prevbirth, adj_p_value_w_age_re_prevbirth) %>%
+    arrange(category))
+
+write_xlsx(sheets, "data/outcomes_analysis/sig_results_outcomes_with_prevbirth.xlsx")
+
+```
+
+### How many were significantly positively or negatively associated with loss?
+
+```{r}
+
+stats_RPL_outcomes_with_prevbirth %>% filter(adj_p_value_w_age_re_prevbirth < 0.05 & odds_ratio_w_age_re_prevbirth > 1) %>% nrow()
+
+stats_RPL_outcomes_with_prevbirth %>% filter(adj_p_value_w_age_re_prevbirth < 0.05 & odds_ratio_w_age_re_prevbirth < 1) %>% nrow()
+
+```
+
+### Function for de-identifying results with diagnosis counts <10
+
+```{r}
+
+deid_results <- function(results_raw) {
+  deid_results <- results_raw %>%
+    mutate(count_under10 = ifelse(loss_count < 10 | birth_count < 10, TRUE, FALSE))
+  for (r in 1:nrow(deid_results)) {
+    if (deid_results$count_under10[r] == TRUE) {
+      deid_results[r,4:(ncol(deid_results)-1)] <- NA
+    }
+  }
+  deid_results$count_under10 <- factor(deid_results$count_under10, levels = c(FALSE,TRUE))
+  deid_results <- arrange(deid_results, count_under10, phenotype)
+  return (deid_results)
+}
+
+```
+
+### Supplementary file 14: outcomes analysis with adjustment for previous birth
+
+```{r}
+
+stats_RPL_outcomes_with_prevbirth_deid <- deid_results(stats_RPL_outcomes_with_prevbirth)
+
+sheets <- list(
+  "outcomes with prevbirth" = stats_RPL_outcomes_with_prevbirth_deid)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_14.xlsx")
+
+```
+
+### Compare with outcomes analysis results
+Note: the only diagnosis that is significantly loss-associated in either analysis is metabolic syndrome
+
+```{r}
+
+load("data/outcomes_analysis/stats_RPL_outcomes.rda")
+
+sig_neg_outcomes <- filter(stats_RPL_outcomes, odds_ratio_w_age_re < 1 & adj_p_value_w_age_re < 0.05)
+sig_neg_outcomes_with_prevbirth <- filter(stats_RPL_outcomes_with_prevbirth, odds_ratio_w_age_re_prevbirth < 1 & adj_p_value_w_age_re_prevbirth < 0.05)
+
+length(intersect(sig_neg_outcomes$phenotype, sig_neg_outcomes_with_prevbirth$phenotype))
+# 47
+
+sig_neg_outcomes %>% filter(!phenotype %in% sig_neg_outcomes_with_prevbirth$phenotype)
+# Miscarriage; stillbirth
+
+```
+

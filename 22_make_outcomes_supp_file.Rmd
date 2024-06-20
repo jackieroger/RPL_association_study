@@ -1,0 +1,65 @@
+---
+title: "30_make_outcomes_supp_file.Rmd"
+output: html_document
+date: '2024-02-23'
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(writexl)
+
+```
+
+### Load data
+
+```{r}
+
+load("data/outcomes_analysis/stats_RPL_outcomes.rda")
+
+```
+
+### How many were significantly positively or negatively associated with loss?
+
+```{r}
+
+stats_RPL_outcomes %>% filter(adj_p_value_w_age_re < 0.05 & odds_ratio_w_age_re > 1) %>% nrow()
+
+stats_RPL_outcomes %>% filter(adj_p_value_w_age_re < 0.05 & odds_ratio_w_age_re < 1) %>% nrow()
+
+```
+
+### Function for de-identifying results with diagnosis counts <10
+
+```{r}
+
+deid_results <- function(results_raw) {
+  deid_results <- results_raw %>%
+    mutate(count_under10 = ifelse(loss_count < 10 | birth_count < 10, TRUE, FALSE))
+  for (r in 1:nrow(deid_results)) {
+    if (deid_results$count_under10[r] == TRUE) {
+      deid_results[r,4:(ncol(deid_results)-1)] <- NA
+    }
+  }
+  deid_results$count_under10 <- factor(deid_results$count_under10, levels = c(FALSE,TRUE))
+  deid_results <- arrange(deid_results, count_under10, phenotype)
+  return (deid_results)
+}
+
+```
+
+### Supplementary file 12: outcomes analysis
+
+```{r}
+
+stats_RPL_outcomes_deid <- deid_results(stats_RPL_outcomes)
+
+sheets <- list(
+  "outcomes analysis" = stats_RPL_outcomes_deid)
+
+write_xlsx(sheets, "submission/files/Supplementary_file_12.xlsx")
+
+```
+
